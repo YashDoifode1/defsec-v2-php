@@ -9,6 +9,9 @@ if (session_status() === PHP_SESSION_NONE) {
 
 require_once 'db.php';
 
+// Manually define APP_URL - Change this to match your installation
+define('APP_URL', 'http://localhost/defsec/v2');
+
 // CSRF token functions
 function generateCSRFToken($form_name) {
     if (empty($_SESSION['csrf_tokens'][$form_name])) {
@@ -58,13 +61,28 @@ if ($isLoggedIn && $userId) {
         }
     }
 }
+
+// Get current page
+$current_page = basename($_SERVER['PHP_SELF']);
+
+// Define page titles
+$page_titles = [
+    'summery.php' => 'Dashboard',
+    'security-dashboard.php' => 'Security',
+    'web-security.php' => 'Attack Logs',
+    'vpn-monitoring.php' => 'VPN Monitoring',
+    'block-list.php' => 'Block List',
+    'settings.php' => 'Settings',
+    'login.php' => 'Login',
+    'profile.php' => 'Profile'
+];
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DefSec - Security Dashboard</title>
+    <title>DefSec - <?php echo htmlspecialchars($page_titles[$current_page] ?? 'Security Dashboard'); ?></title>
     
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -138,7 +156,7 @@ if ($isLoggedIn && $userId) {
         /* Main Content */
         .main-content {
             margin-left: var(--sidebar-width);
-            padding: 20px;
+            padding: 0;
             min-height: 100vh;
             transition: margin-left 0.3s ease;
         }
@@ -253,6 +271,11 @@ if ($isLoggedIn && $userId) {
         ::-webkit-scrollbar-thumb:hover {
             background: #6c757d;
         }
+        
+        /* Content Area */
+        .content-area {
+            padding: 20px;
+        }
     </style>
 </head>
 <body>
@@ -269,38 +292,38 @@ if ($isLoggedIn && $userId) {
         <div class="sidebar-menu">
             <ul class="nav flex-column">
                 <li class="nav-item">
-                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'summery.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/pages/summery.php">
+                    <a class="nav-link <?php echo $current_page == 'summery.php' ? 'active' : ''; ?>" href="<?php echo APP_URL; ?>/pages/summery.php">
                         <i class="fas fa-home"></i> Dashboard
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'security-dashboard.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/pages/security-dashboard.php">
-                        <i class="fas fa-home"></i> Security
+                    <a class="nav-link <?php echo $current_page == 'security-dashboard.php' ? 'active' : ''; ?>" href="<?php echo APP_URL; ?>/pages/security-dashboard.php">
+                        <i class="fas fa-shield-alt"></i> Security
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'web-security.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/pages/web-security.php">
+                    <a class="nav-link <?php echo $current_page == 'web-security.php' ? 'active' : ''; ?>" href="<?php echo APP_URL; ?>/pages/web-security.php">
                         <i class="fas fa-bug"></i> Attack Logs
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'vpn-monitoring.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/pages/vpn-monitoring.php">
+                    <a class="nav-link <?php echo $current_page == 'vpn-monitoring.php' ? 'active' : ''; ?>" href="<?php echo APP_URL; ?>/pages/vpn-monitoring.php">
                         <i class="fas fa-shield-virus"></i> VPN Monitor
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'block-list.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/pages/block-list.php">
+                    <a class="nav-link <?php echo $current_page == 'block-list.php' ? 'active' : ''; ?>" href="<?php echo APP_URL; ?>/pages/block-list.php">
                         <i class="fas fa-ban"></i> Block List
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'settings.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/auth/settings.php">
+                    <a class="nav-link <?php echo $current_page == 'settings.php' ? 'active' : ''; ?>" href="<?php echo APP_URL; ?>/auth/settings.php">
                         <i class="fas fa-cog"></i> Settings
                     </a>
                 </li>
                 <?php if ($isLoggedIn): ?>
                 <li class="nav-item mt-4">
-                    <a class="nav-link text-danger" href="http://localhost/defsec/v2/logout.php">
+                    <a class="nav-link text-danger" href="<?php echo APP_URL; ?>/logout.php">
                         <i class="fas fa-sign-out-alt"></i> Logout
                     </a>
                 </li>
@@ -318,19 +341,7 @@ if ($isLoggedIn && $userId) {
                     <i class="fas fa-bars"></i>
                 </button>
                 <h4 class="mb-0">
-                    <?php
-                    $page_titles = [
-                        'summery.php' => 'Dashboard',
-                        'security-dashboard.php' => 'Security',
-                        'web-security.php' => 'Attack Logs',
-                        'vpn-monitoring.php' => 'VPN Monitoring',
-                        'block-list.php' => 'Block List',
-                        'settings.php' => 'Settings',
-                        'login.php' => 'Login'
-                    ];
-                    $current_page = basename($_SERVER['PHP_SELF']);
-                    echo $page_titles[$current_page] ?? 'Dashboard';
-                    ?>
+                    <?php echo htmlspecialchars($page_titles[$current_page] ?? 'Dashboard'); ?>
                 </h4>
             </div>
             
@@ -342,10 +353,10 @@ if ($isLoggedIn && $userId) {
                         <?php echo htmlspecialchars($_SESSION['username'] ?? 'User'); ?>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="http://localhost/defsec/v2/auth/profile.php"><i class="fas fa-user me-2"></i> Profile</a></li>
-                        <li><a class="dropdown-item" href="http://localhost/defsec/v2/auth/settings.php"><i class="fas fa-cog me-2"></i> Settings</a></li>
+                        <li><a class="dropdown-item" href="<?php echo APP_URL; ?>/auth/profile.php"><i class="fas fa-user me-2"></i> Profile</a></li>
+                        <li><a class="dropdown-item" href="<?php echo APP_URL; ?>/auth/settings.php"><i class="fas fa-cog me-2"></i> Settings</a></li>
                         <li><hr class="dropdown-divider"></li>
-                        <li><a class="dropdown-item text-danger" href="http://localhost/defsec/v2/auth/logout.php"><i class="fas fa-sign-out-alt me-2"></i> Logout</a></li>
+                        <li><a class="dropdown-item text-danger" href="<?php echo APP_URL; ?>/auth/logout.php"><i class="fas fa-sign-out-alt me-2"></i> Logout</a></li>
                     </ul>
                 </div>
             </div>
@@ -353,4 +364,4 @@ if ($isLoggedIn && $userId) {
         </header>
 
         <!-- Main Content Area -->
-        <div class="container-fluid py-4">
+        <div class="content-area">
