@@ -278,6 +278,83 @@ $page_titles = [
             padding: 20px;
         }
     </style>
+    <style>/* Geolocation specific styles */
+.table-active {
+    background-color: rgba(13, 110, 253, 0.1) !important;
+}
+
+.country-flag {
+    width: 20px;
+    height: 15px;
+    display: inline-block;
+    margin-right: 8px;
+    vertical-align: middle;
+    background-size: cover;
+    border: 1px solid #444;
+}
+
+.map-popup {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.stat-card {
+    transition: transform 0.2s;
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+}
+
+.bulk-actions-bar {
+    position: sticky;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.9);
+    padding: 10px;
+    border-top: 1px solid #444;
+    z-index: 100;
+}
+
+/* Chart containers */
+.chart-container {
+    position: relative;
+    height: 300px;
+    width: 100%;
+}
+
+/* Filter panel */
+.filter-card {
+    transition: all 0.3s ease;
+}
+
+.filter-card.collapsed {
+    max-height: 60px;
+    overflow: hidden;
+}
+
+/* Loading spinner */
+.geo-loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px;
+}
+
+/* Responsive table adjustments */
+@media (max-width: 768px) {
+    .table-responsive {
+        font-size: 0.9rem;
+    }
+    
+    .btn-group-sm {
+        flex-wrap: wrap;
+    }
+    
+    .chart-container {
+        height: 250px;
+    }
+}</style>
 </head>
 <body>
     <!-- Sidebar -->

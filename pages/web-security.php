@@ -18,7 +18,7 @@ date_default_timezone_set('UTC');
    FILTER / SORT / PAGINATION
 -------------------------------- */
 $search_ip = trim($_GET['search_ip'] ?? '');
-$severity_filter = $_GET['severity'] ?? [];
+$severity_filter = isset($_GET['severity']) ? (array)$_GET['severity'] : [];
 $sort_column = $_GET['sort'] ?? 'timestamp';
 $sort_order = strtoupper($_GET['order'] ?? 'DESC');
 $page = max(1, intval($_GET['page'] ?? 1));
@@ -134,6 +134,112 @@ function getFilteredLogs($pdo, $search_ip, $severity_filter, $sort_column, $sort
 }
 
 /* -------------------------------
+   GET SEVERITY DISTRIBUTION DATA
+-------------------------------- */
+function getSeverityDistribution($pdo, $userId, $websiteId, $timeRange = '7d') {
+    $timeCondition = '';
+    
+    switch($timeRange) {
+        case '24h':
+            $timeCondition = "AND timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY)";
+            break;
+        case '7d':
+            $timeCondition = "AND timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+            break;
+        case '30d':
+            $timeCondition = "AND timestamp >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+            break;
+        default:
+            $timeCondition = "AND timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+    }
+    
+    $sql = "SELECT 
+                severity,
+                COUNT(*) as count
+            FROM attack_logs 
+            WHERE user_id = ? AND website_id = ?
+            $timeCondition
+            GROUP BY severity
+            ORDER BY 
+                CASE severity 
+                    WHEN 'Critical' THEN 1
+                    WHEN 'High' THEN 2
+                    WHEN 'Medium' THEN 3
+                    WHEN 'Low' THEN 4
+                    WHEN 'Info' THEN 5
+                    ELSE 6
+                END";
+    
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$userId, $websiteId]);
+    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Initialize all severity levels
+    $distribution = [
+        'Critical' => 0,
+        'High' => 0,
+        'Medium' => 0,
+        'Low' => 0,
+        'Info' => 0
+    ];
+    
+    // Fill with actual data
+    foreach ($results as $row) {
+        $severity = ucfirst(strtolower($row['severity']));
+        if (isset($distribution[$severity])) {
+            $distribution[$severity] = (int)$row['count'];
+        }
+    }
+    
+    return $distribution;
+}
+
+/* -------------------------------
+   GET ATTACK TYPE DISTRIBUTION
+-------------------------------- */
+function getAttackTypeDistribution($pdo, $userId, $websiteId, $timeRange = '7d') {
+    $timeCondition = '';
+    
+    switch($timeRange) {
+        case '24h':
+            $timeCondition = "AND timestamp >= DATE_SUB(NOW(), INTERVAL 1 DAY)";
+            break;
+        case '7d':
+            $timeCondition = "AND timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+            break;
+        case '30d':
+            $timeCondition = "AND timestamp >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+            break;
+        default:
+            $timeCondition = "AND timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+    }
+    
+    $sql = "SELECT 
+                attack_type,
+                COUNT(*) as count
+            FROM attack_logs 
+            WHERE user_id = ? AND website_id = ?
+            $timeCondition
+            GROUP BY attack_type
+            ORDER BY count DESC
+            LIMIT 10";
+    
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$userId, $websiteId]);
+    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    $types = [];
+    $counts = [];
+    
+    foreach ($results as $row) {
+        $types[] = $row['attack_type'];
+        $counts[] = (int)$row['count'];
+    }
+    
+    return ['types' => $types, 'counts' => $counts];
+}
+
+/* -------------------------------
    EXPORT HANDLER
 -------------------------------- */
 if (isset($_GET['export'])) {
@@ -205,11 +311,18 @@ try {
     $logs = getFilteredLogs($pdo, $search_ip, $severity_filter, $sort_column, $sort_order, $page, $per_page, $userId, $websiteId);
     
     error_log("Logs fetched: " . count($logs));
+    
+    // Get severity distribution for charts
+    $severityDistribution = getSeverityDistribution($pdo, $userId, $websiteId, '7d');
+    $attackTypeDistribution = getAttackTypeDistribution($pdo, $userId, $websiteId, '7d');
+    
 } catch (Exception $e) {
     error_log("Error fetching logs: " . $e->getMessage());
     $total_logs = 0;
     $total_pages = 1;
     $logs = [];
+    $severityDistribution = ['Critical' => 0, 'High' => 0, 'Medium' => 0, 'Low' => 0, 'Info' => 0];
+    $attackTypeDistribution = ['types' => [], 'counts' => []];
 }
 
 /* -------------------------------
@@ -221,6 +334,8 @@ function getSeverityBadge($severity) {
         case 'critical': return 'danger';
         case 'high': return 'warning';
         case 'medium': return 'info';
+        case 'low': return 'success';
+        case 'info': return 'secondary';
         default: return 'secondary';
     }
 }
@@ -231,6 +346,8 @@ function getSeverityIcon($severity) {
         case 'critical': return 'fa-fire';
         case 'high': return 'fa-exclamation-triangle';
         case 'medium': return 'fa-exclamation-circle';
+        case 'low': return 'fa-info-circle';
+        case 'info': return 'fa-info';
         default: return 'fa-info-circle';
     }
 }
@@ -266,11 +383,13 @@ function buildQueryString($page, $search_ip, $severity_filter, $sort_column, $so
     return http_build_query($params);
 }
 
-// Get severity counts for chart
+// Get severity counts for summary cards
 $severityCounts = [
     'critical' => 0,
     'high' => 0,
-    'medium' => 0
+    'medium' => 0,
+    'low' => 0,
+    'info' => 0
 ];
 
 foreach ($logs as $log) {
@@ -324,7 +443,7 @@ foreach ($logs as $log) {
                         <i class="fas fa-exclamation-triangle"></i>
                     </div>
                     <div class="text-muted mb-1">Critical</div>
-                    <div class="stat-number text-warning"><?php echo $severityCounts['critical']; ?></div>
+                    <div class="stat-number text-warning"><?php echo $severityDistribution['Critical']; ?></div>
                     <div class="stat-change">
                         <i class="fas fa-fire"></i> High priority
                     </div>
@@ -341,7 +460,7 @@ foreach ($logs as $log) {
                         <i class="fas fa-exclamation-circle"></i>
                     </div>
                     <div class="text-muted mb-1">High</div>
-                    <div class="stat-number text-info"><?php echo $severityCounts['high']; ?></div>
+                    <div class="stat-number text-info"><?php echo $severityDistribution['High']; ?></div>
                     <div class="stat-change">
                         <i class="fas fa-shield-alt"></i> Monitored
                     </div>
@@ -358,7 +477,7 @@ foreach ($logs as $log) {
                         <i class="fas fa-info-circle"></i>
                     </div>
                     <div class="text-muted mb-1">Medium</div>
-                    <div class="stat-number text-secondary"><?php echo $severityCounts['medium']; ?></div>
+                    <div class="stat-number text-secondary"><?php echo $severityDistribution['Medium']; ?></div>
                     <div class="stat-change">
                         <i class="fas fa-eye"></i> Low risk
                     </div>
@@ -412,6 +531,14 @@ foreach ($logs as $log) {
                                         Medium
                                     </label>
                                 </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="severity-low" 
+                                           name="severity[]" value="Low" 
+                                           <?php echo in_array('Low', $severity_filter) ? 'checked' : ''; ?>>
+                                    <label class="form-check-label badge bg-success" for="severity-low">
+                                        Low
+                                    </label>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -455,8 +582,8 @@ foreach ($logs as $log) {
     <div class="col-xl-8">
         <div class="dashboard-card">
             <div class="d-flex justify-content-between align-items-center mb-4">
-                <h5 class="mb-0"><i class="fas fa-chart-pie me-2"></i>Severity Distribution</h5>
-                <select class="form-select form-select-sm w-auto" id="distributionTimeRange">
+                <h5 class="mb-0"><i class="fas fa-chart-pie me-2"></i>Severity Distribution (Last 7 Days)</h5>
+                <select class="form-select form-select-sm w-auto" id="distributionTimeRange" onchange="updateCharts()">
                     <option value="24h">Last 24 Hours</option>
                     <option value="7d" selected>Last 7 Days</option>
                     <option value="30d">Last 30 Days</option>
@@ -533,6 +660,9 @@ foreach ($logs as $log) {
                             </td>
                             <td>
                                 <code><?php echo htmlspecialchars($log['ip_address']); ?></code>
+                                <button class="btn btn-sm btn-outline-info ms-1" onclick="showIPDetails('<?php echo htmlspecialchars($log['ip_address']); ?>')">
+                                    <i class="fas fa-map-marker-alt"></i>
+                                </button>
                             </td>
                             <td>
                                 <button class="btn btn-sm btn-outline-primary" onclick="toggleDetails(<?php echo $log['id']; ?>)">
@@ -544,26 +674,32 @@ foreach ($logs as $log) {
                                 </a>
                             </td>
                         </tr>
-                        <tr id="details-<?php echo $log['id']; ?>" class="d-none">
+                        <tr id="details-<?php echo $log['id']; ?>" class="d-none details-row">
                             <td colspan="6">
-                                <div class="bg-dark rounded p-3 mt-2">
+                                <div class="bg-dark rounded p-3 mt-2 border border-secondary">
                                     <div class="row g-3">
                                         <div class="col-md-6">
                                             <h6><i class="fas fa-desktop me-2"></i>User Agent</h6>
-                                            <div class="bg-black rounded p-2 small">
+                                            <div class="bg-black rounded p-2 small border border-dark">
                                                 <?php echo htmlspecialchars($log['user_agent']); ?>
                                             </div>
                                         </div>
                                         <div class="col-md-6">
                                             <h6><i class="fas fa-link me-2"></i>Request URL</h6>
-                                            <div class="bg-black rounded p-2 small">
+                                            <div class="bg-black rounded p-2 small border border-dark">
                                                 <?php echo htmlspecialchars($log['request_url']); ?>
                                             </div>
                                         </div>
                                         <div class="col-12">
                                             <h6><i class="fas fa-code me-2"></i>Attack Payload</h6>
-                                            <div class="bg-black rounded p-2 small">
-                                                <pre class="mb-0"><?php echo htmlspecialchars($log['attack_payload']); ?></pre>
+                                            <div class="bg-black rounded p-2 small border border-dark">
+                                                <pre class="mb-0 text-light"><?php echo htmlspecialchars($log['attack_payload']); ?></pre>
+                                            </div>
+                                        </div>
+                                        <div class="col-12">
+                                            <div class="d-flex justify-content-between align-items-center mt-2">
+                                                <small class="text-muted">Attack ID: #<?php echo $log['id']; ?></small>
+                                                <small class="text-muted">Detected: <?php echo date('Y-m-d H:i:s', strtotime($log['timestamp'])); ?></small>
                                             </div>
                                         </div>
                                     </div>
@@ -633,7 +769,7 @@ foreach ($logs as $log) {
     <!-- Attack Types Analysis -->
     <div class="col-xl-6">
         <div class="dashboard-card">
-            <h5 class="mb-4"><i class="fas fa-chart-bar me-2"></i>Attack Types Analysis</h5>
+            <h5 class="mb-4"><i class="fas fa-chart-bar me-2"></i>Attack Types Analysis (Last 7 Days)</h5>
             <div id="attackTypesChart" style="height: 300px;"></div>
         </div>
     </div>
@@ -663,6 +799,9 @@ foreach ($logs as $log) {
                                     <?php echo htmlspecialchars($log['severity']); ?>
                                 </span>
                             </div>
+                            <small class="text-truncate d-block mt-1" title="<?php echo htmlspecialchars($log['request_url']); ?>">
+                                <i class="fas fa-link me-1"></i><?php echo htmlspecialchars(substr($log['request_url'], 0, 50)); ?>...
+                            </small>
                         </div>
                     </div>
                 </div>
@@ -677,18 +816,50 @@ foreach ($logs as $log) {
     </div>
 </div>
 
+<!-- IP Details Modal -->
+<div class="modal fade" id="ipDetailsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title">IP Address Details</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="ipDetailsContent">
+                    Loading IP details...
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a href="#" id="blockIpBtn" class="btn btn-danger">
+                    <i class="fas fa-ban me-1"></i> Block IP
+                </a>
+                <a href="#" id="viewGeolocationBtn" class="btn btn-info" target="_blank">
+                    <i class="fas fa-map-marker-alt me-1"></i> View on Map
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Include ApexCharts -->
 <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.35.0/dist/apexcharts.min.js"></script>
 <script>
+    // Initialize variables for chart updates
+    let severityChart;
+    let attackTypesChart;
+    let securityScoreChart;
+
     $(document).ready(function() {
         // Initialize security score chart
         var securityScore = <?php echo calculateSecurityScore($logs); ?>;
-        var securityScoreChart = new ApexCharts(document.querySelector("#securityScoreChart"), {
+        securityScoreChart = new ApexCharts(document.querySelector("#securityScoreChart"), {
             series: [securityScore],
             chart: {
                 type: 'radialBar',
                 height: 200,
-                background: 'transparent'
+                background: 'transparent',
+                foreColor: '#e9ecef'
             },
             plotOptions: {
                 radialBar: {
@@ -696,7 +867,13 @@ foreach ($logs as $log) {
                         size: '70%',
                     },
                     dataLabels: {
-                        show: false
+                        show: true,
+                        name: {
+                            show: false
+                        },
+                        value: {
+                            show: false
+                        }
                     }
                 }
             },
@@ -709,21 +886,32 @@ foreach ($logs as $log) {
 
         securityScoreChart.render();
 
-        // Initialize severity distribution chart
-        var severityChart = new ApexCharts(document.querySelector("#severityChart"), {
-            series: [<?php echo $severityCounts['critical']; ?>, <?php echo $severityCounts['high']; ?>, <?php echo $severityCounts['medium']; ?>],
+        // Initialize severity distribution chart with actual data
+        var severityData = [
+            <?php echo $severityDistribution['Critical']; ?>,
+            <?php echo $severityDistribution['High']; ?>,
+            <?php echo $severityDistribution['Medium']; ?>,
+            <?php echo $severityDistribution['Low']; ?>,
+            <?php echo $severityDistribution['Info']; ?>
+        ];
+
+        severityChart = new ApexCharts(document.querySelector("#severityChart"), {
+            series: severityData,
             chart: {
                 type: 'donut',
                 height: 300,
                 background: 'transparent',
                 foreColor: '#e9ecef'
             },
-            labels: ['Critical', 'High', 'Medium'],
-            colors: ['#dc3545', '#ffc107', '#17a2b8'],
+            labels: ['Critical', 'High', 'Medium', 'Low', 'Info'],
+            colors: ['#dc3545', '#ffc107', '#17a2b8', '#28a745', '#6c757d'],
             dataLabels: {
                 enabled: true,
                 formatter: function(val, opts) {
-                    return opts.w.config.series[opts.seriesIndex]
+                    return opts.w.config.series[opts.seriesIndex] + ' (' + val.toFixed(1) + '%)';
+                },
+                style: {
+                    colors: ['#fff']
                 }
             },
             legend: {
@@ -742,58 +930,31 @@ foreach ($logs as $log) {
                         position: 'bottom'
                     }
                 }
-            }]
+            }],
+            tooltip: {
+                y: {
+                    formatter: function(value) {
+                        return value + ' attacks';
+                    }
+                }
+            }
         });
 
         severityChart.render();
 
         // Initialize attack types chart with actual data
-        <?php
-        // Calculate attack type counts
-        $attackTypeCounts = [];
-        foreach ($logs as $log) {
-            $type = $log['attack_type'];
-            if (!isset($attackTypeCounts[$type])) {
-                $attackTypeCounts[$type] = 0;
-            }
-            $attackTypeCounts[$type]++;
+        var attackTypesData = <?php echo json_encode($attackTypeDistribution['counts']); ?>;
+        var attackTypeLabels = <?php echo json_encode($attackTypeDistribution['types']); ?>;
+        
+        // If no data, create empty chart
+        if (attackTypesData.length === 0) {
+            attackTypesData = [0, 0, 0, 0, 0];
+            attackTypeLabels = ['No attacks', 'in the', 'selected', 'time', 'period'];
         }
-        arsort($attackTypeCounts); // Sort by count descending
-        $topAttackTypes = array_slice($attackTypeCounts, 0, 7); // Get top 7
-        ?>
-        
-        var attackTypesData = [
-            <?php 
-            foreach ($topAttackTypes as $type => $count) {
-                echo $count . ',';
-            }
-            if (count($topAttackTypes) < 7) {
-                // Fill remaining with zeros
-                for ($i = count($topAttackTypes); $i < 7; $i++) {
-                    echo '0,';
-                }
-            }
-            ?>
-        ];
-        
-        var attackTypeLabels = [
-            <?php 
-            foreach ($topAttackTypes as $type => $count) {
-                echo "'" . addslashes($type) . "',";
-            }
-            if (count($topAttackTypes) < 7) {
-                // Fill remaining with placeholders
-                $placeholders = ['SQL Injection', 'XSS', 'Brute Force', 'DDoS', 'Malware', 'Phishing', 'CSRF'];
-                for ($i = count($topAttackTypes); $i < 7; $i++) {
-                    echo "'" . $placeholders[$i] . "',";
-                }
-            }
-            ?>
-        ];
 
-        var attackTypesChart = new ApexCharts(document.querySelector("#attackTypesChart"), {
+        attackTypesChart = new ApexCharts(document.querySelector("#attackTypesChart"), {
             series: [{
-                name: 'Attacks',
+                name: 'Attack Count',
                 data: attackTypesData
             }],
             chart: {
@@ -810,28 +971,51 @@ foreach ($logs as $log) {
                 bar: {
                     horizontal: true,
                     columnWidth: '60%',
+                    borderRadius: 4,
+                    distributed: false
                 },
             },
             dataLabels: {
-                enabled: false
+                enabled: true,
+                formatter: function(val) {
+                    return val;
+                },
+                style: {
+                    colors: ['#fff']
+                }
             },
             xaxis: {
                 categories: attackTypeLabels,
                 labels: {
                     style: {
-                        colors: '#6c757d'
+                        colors: '#6c757d',
+                        fontSize: '12px'
+                    }
+                },
+                title: {
+                    text: 'Number of Attacks',
+                    style: {
+                        color: '#e9ecef'
                     }
                 }
             },
             yaxis: {
                 labels: {
                     style: {
-                        colors: '#6c757d'
+                        colors: '#6c757d',
+                        fontSize: '12px'
                     }
                 }
             },
             grid: {
                 borderColor: '#495057'
+            },
+            tooltip: {
+                y: {
+                    formatter: function(value) {
+                        return value + ' attacks';
+                    }
+                }
             }
         });
 
@@ -840,19 +1024,24 @@ foreach ($logs as $log) {
         // Toggle details for a specific log
         window.toggleDetails = function(logId) {
             const detailsRow = document.getElementById(`details-${logId}`);
+            const button = event.target.closest('button');
+            
             detailsRow.classList.toggle('d-none');
             
-            const button = event.target.closest('button');
             if (detailsRow.classList.contains('d-none')) {
                 button.innerHTML = '<i class="fas fa-eye me-1"></i> Details';
+                button.classList.remove('btn-primary');
+                button.classList.add('btn-outline-primary');
             } else {
                 button.innerHTML = '<i class="fas fa-eye-slash me-1"></i> Hide';
+                button.classList.remove('btn-outline-primary');
+                button.classList.add('btn-primary');
             }
         }
 
         // Toggle all details
         window.toggleAllDetails = function() {
-            const allDetails = document.querySelectorAll('[id^="details-"]');
+            const allDetails = document.querySelectorAll('.details-row');
             if (allDetails.length === 0) return;
             
             const shouldShow = allDetails[0].classList.contains('d-none');
@@ -863,12 +1052,141 @@ foreach ($logs as $log) {
                     details.classList.remove('d-none');
                     if (buttons[index]) {
                         buttons[index].innerHTML = '<i class="fas fa-eye-slash me-1"></i> Hide';
+                        buttons[index].classList.remove('btn-outline-primary');
+                        buttons[index].classList.add('btn-primary');
                     }
                 } else {
                     details.classList.add('d-none');
                     if (buttons[index]) {
                         buttons[index].innerHTML = '<i class="fas fa-eye me-1"></i> Details';
+                        buttons[index].classList.remove('btn-primary');
+                        buttons[index].classList.add('btn-outline-primary');
                     }
+                }
+            });
+        }
+
+        // Show IP details modal
+        window.showIPDetails = function(ip) {
+            $('#ipDetailsContent').html(`
+                <div class="text-center py-3">
+                    <div class="spinner-border" role="status"></div>
+                    <p class="mt-2">Loading IP information...</p>
+                </div>
+            `);
+            
+            const modal = new bootstrap.Modal(document.getElementById('ipDetailsModal'));
+            modal.show();
+            
+            // Fetch IP details via AJAX
+            $.ajax({
+                url: 'api/get-ip-details.php',
+                method: 'GET',
+                data: { ip: ip },
+                success: function(response) {
+                    if (response.success) {
+                        $('#ipDetailsContent').html(`
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label text-muted">IP Address</label>
+                                        <div class="form-control bg-dark text-light">
+                                            ${response.data.ip}
+                                        </div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label text-muted">Country</label>
+                                        <div class="form-control bg-dark text-light">
+                                            ${response.data.country || 'Unknown'}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label class="form-label text-muted">ISP</label>
+                                        <div class="form-control bg-dark text-light">
+                                            ${response.data.isp || 'Unknown'}
+                                        </div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label text-muted">Threat Level</label>
+                                        <div class="form-control bg-dark text-light">
+                                            <span class="badge bg-${response.data.threat_level === 'high' ? 'danger' : response.data.threat_level === 'medium' ? 'warning' : 'success'}">
+                                                ${response.data.threat_level || 'low'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="alert alert-info mt-3">
+                                <strong>Total Attacks from this IP:</strong> ${response.data.attack_count || 0}
+                            </div>
+                        `);
+                    } else {
+                        $('#ipDetailsContent').html(`
+                            <div class="alert alert-danger">
+                                Failed to load IP details: ${response.message}
+                            </div>
+                        `);
+                    }
+                },
+                error: function() {
+                    $('#ipDetailsContent').html(`
+                        <div class="alert alert-danger">
+                            Failed to load IP details. Please try again.
+                        </div>
+                    `);
+                }
+            });
+            
+            // Set up button links
+            $('#blockIpBtn').attr('href', 'block-list.php?ip=' + encodeURIComponent(ip));
+            $('#viewGeolocationBtn').attr('href', 'geolocation.php?ip=' + encodeURIComponent(ip));
+        }
+
+        // Update charts based on time range
+        window.updateCharts = function() {
+            const timeRange = $('#distributionTimeRange').val();
+            
+            // Show loading state
+            $('#severityChart').html('<div class="text-center py-5"><div class="spinner-border"></div><p class="mt-2">Loading...</p></div>');
+            $('#attackTypesChart').html('<div class="text-center py-5"><div class="spinner-border"></div><p class="mt-2">Loading...</p></div>');
+            
+            $.ajax({
+                url: 'api/get-chart-data.php',
+                method: 'GET',
+                data: {
+                    timeRange: timeRange,
+                    website_id: <?php echo $websiteId; ?>
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Update severity chart
+                        severityChart.updateSeries(response.severityData);
+                        severityChart.updateOptions({
+                            labels: ['Critical', 'High', 'Medium', 'Low', 'Info']
+                        });
+                        
+                        // Update attack types chart
+                        attackTypesChart.updateSeries([{
+                            data: response.attackTypeData
+                        }]);
+                        attackTypesChart.updateOptions({
+                            xaxis: {
+                                categories: response.attackTypeLabels
+                            }
+                        });
+                        
+                        // Update summary cards
+                        $('#criticalCount').text(response.severityCounts.critical);
+                        $('#highCount').text(response.severityCounts.high);
+                        $('#mediumCount').text(response.severityCounts.medium);
+                    }
+                },
+                error: function() {
+                    // Restore original charts if error
+                    severityChart.render();
+                    attackTypesChart.render();
                 }
             });
         }
@@ -898,41 +1216,93 @@ foreach ($logs as $log) {
             window.location.href = queryString;
         }
 
-        // Time range selector
-        $('#distributionTimeRange').change(function() {
-            // You can implement AJAX to update chart data based on selected range
-            console.log('Time range changed to:', $(this).val());
-            // Example: fetchData($(this).val());
-        });
-
         // Auto-refresh every 30 seconds
         setInterval(function() {
-            // You can implement AJAX refresh here
-            console.log('Auto-refresh triggered');
+            // Check for new attacks
+            $.ajax({
+                url: 'api/check-new-attacks.php',
+                method: 'GET',
+                data: {
+                    website_id: <?php echo $websiteId; ?>,
+                    last_check: new Date().toISOString()
+                },
+                success: function(response) {
+                    if (response.has_new_attacks) {
+                        // Show notification
+                        showNotification('New attacks detected', 'warning');
+                        
+                        // Optionally refresh the page
+                        if (response.auto_refresh) {
+                            window.location.reload();
+                        }
+                    }
+                }
+            });
         }, 30000);
     });
+
+    // Show notification
+    function showNotification(message, type = 'info') {
+        const alertClass = {
+            'info': 'alert-info',
+            'success': 'alert-success',
+            'warning': 'alert-warning',
+            'danger': 'alert-danger'
+        }[type] || 'alert-info';
+        
+        const alert = $(`
+            <div class="alert ${alertClass} alert-dismissible fade show" role="alert" 
+                 style="position: fixed; top: 20px; right: 20px; z-index: 9999; max-width: 300px;">
+                <i class="fas fa-bell me-2"></i>
+                ${message}
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
+            </div>
+        `);
+        
+        $('body').append(alert);
+        
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+            alert.alert('close');
+        }, 5000);
+    }
 </script>
 
 <style>
     /* Timeline styling */
     .timeline {
         position: relative;
+        padding-left: 20px;
+    }
+    
+    .timeline:before {
+        content: '';
+        position: absolute;
+        left: 6px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: #495057;
     }
     
     .timeline-item {
         position: relative;
+        margin-bottom: 20px;
     }
     
     .timeline-marker {
-        width: 12px;
-        height: 12px;
+        width: 14px;
+        height: 14px;
         border-radius: 50%;
         position: absolute;
+        left: -24px;
         top: 5px;
+        border: 2px solid #212529;
+        z-index: 2;
     }
     
     .timeline-content {
-        padding-left: 20px;
+        padding-left: 15px;
     }
     
     /* Progress bar customization */
@@ -944,6 +1314,8 @@ foreach ($logs as $log) {
     .sortable {
         cursor: pointer;
         user-select: none;
+        position: relative;
+        padding-right: 25px !important;
     }
     
     .sortable:hover {
@@ -952,7 +1324,7 @@ foreach ($logs as $log) {
     
     /* Table row details */
     .bg-black {
-        background-color: #121212;
+        background-color: #121212 !important;
     }
     
     pre {
@@ -960,6 +1332,36 @@ foreach ($logs as $log) {
         font-family: 'Consolas', 'Monaco', monospace;
         font-size: 0.85rem;
         line-height: 1.4;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow-x: auto;
+        background: #1a1a1a;
+        padding: 10px;
+        border-radius: 4px;
+        border: 1px solid #333;
+    }
+    
+    /* Details row animation */
+    .details-row {
+        transition: all 0.3s ease;
+    }
+    
+    /* Card hover effects */
+    .dashboard-card:hover {
+        transform: translateY(-2px);
+        transition: transform 0.2s ease;
+    }
+    
+    /* Modal styling */
+    .modal-content {
+        border: 1px solid #495057;
+    }
+    
+    /* Chart container */
+    .apexcharts-tooltip {
+        background: #212529 !important;
+        border: 1px solid #495057 !important;
+        color: #e9ecef !important;
     }
     
     /* Responsive adjustments */
@@ -975,6 +1377,41 @@ foreach ($logs as $log) {
         #securityScoreChart {
             width: 150px;
             height: 150px;
+        }
+        
+        .timeline:before {
+            left: 0;
+        }
+        
+        .timeline-marker {
+            left: -18px;
+        }
+        
+        .sortable {
+            font-size: 0.9rem;
+        }
+        
+        .btn-group {
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+        
+        .btn {
+            margin-bottom: 5px;
+        }
+    }
+    
+    @media (max-width: 576px) {
+        .display-4 {
+            font-size: 2rem;
+        }
+        
+        .stat-number {
+            font-size: 1.5rem;
+        }
+        
+        #severityChart, #attackTypesChart {
+            height: 250px;
         }
     }
 </style>
