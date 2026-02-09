@@ -1,0 +1,19 @@
+I have a PHP cybersecurity dashboard that currently displays attack logs, traffic metrics, and a Leaflet map (dashboard.php). I also have:
+
+tracker.php – tracks visitors, VPN/Tor usage, unique IPs/countries, and logs.
+
+vpn-monitoring.php – handles VPN blocking, strict mode, and allowed countries.
+
+I want to merge these into the dashboard so that it:
+
+Displays live visitor stats (total visitors, VPN users, Tor users, unique countries, unique IPs) as metrics cards.
+
+Reflects VPN/Strict Mode status and allowed countries.
+
+Updates the Leaflet map to include VPN/Tor indicators on markers.
+
+Shows recent visitors and attacks in tables.
+
+Retains attack charts and auto-refresh features.
+
+Please provide a complete, integrated dashboard.php that fetches data from logs, attack_logs, and allowed_countries tables, shows live metrics, and updates the map and tables dynamically.

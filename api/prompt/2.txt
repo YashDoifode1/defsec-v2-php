@@ -1,0 +1,41 @@
+Project Context Prompt for New Chat:
+
+You are assisting with a security analytics project. The system tracks multiple users and multiple websites, and logs security and analytics data.
+
+Database structure (relevant tables):
+
+user2: id, username, email, password_hash, api_key, full_name, role, status, last_login, login_attempts, last_attempt, is_locked, created_at, updated_at
+
+websites: id, user_id, site_name, domain, status, created_at
+
+attack_logs: id, user_id, website_id, timestamp, attack_type, severity, ip_address, user_agent, attack_payload, request_url
+
+access_logs: id, user_id, website_id, timestamp, ip_address, user_agent, action, success
+
+blocked_ips: id, user_id, website_id, ip, reason, blocked_at
+
+allowed_countries: id, website_id, country_code, is_allowed
+
+Project Goals:
+
+Track analytics and security events per user and per website.
+
+Allow dashboards for each user to see attacks, access logs, VPN/proxy detections, and analytics.
+
+Filter, sort, and aggregate data per user and per website.
+
+All API endpoints (attack_logs, access_logs, blocked_ips, VPN check, visitor tracking) should associate user_id and website_id to support dashboards.
+
+Current Data:
+Users:
+
+admin (id=1)
+
+yashdoifode (id=2)
+Websites:
+
+DefSec Main (id=1, user_id=1)
+
+Yash Blog (id=2, user_id=2)
+
+When updating any table or API, make sure to link user_id and website_id properly.
