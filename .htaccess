@@ -1,0 +1,28 @@
+# Hide directory listing
+Options -Indexes
+
+# Protect includes folder
+<Directory "/includes">
+    Deny from all
+</Directory>
+
+# Enable rewrite engine
+RewriteEngine On
+
+# Prevent access to .env
+<Files ".env">
+    Order allow,deny
+    Deny from all
+</Files>
+
+# Custom error pages
+ErrorDocument 400 http://localhost/defsec/v2/err/400.php
+ErrorDocument 401 http://localhost/defsec/v2/err/401.php
+ErrorDocument 401 http://localhost/defsec/v2/err/403.php
+ErrorDocument 401 http://localhost/defsec/v2/err/404.php
+ErrorDocument 401 http://localhost/defsec/v2/err/500.php
+
+# Optional: Pretty URLs (if using routing)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [L]

@@ -74,7 +74,8 @@ $page_titles = [
     'block-list.php' => 'Block List',
     'settings.php' => 'Settings',
     'login.php' => 'Login',
-    'profile.php' => 'Profile'
+    'profile.php' => 'Profile',
+    'export.php ' => 'Export Logs'
 ];
 ?>
 <!DOCTYPE html>
@@ -314,6 +315,11 @@ $page_titles = [
                 <li class="nav-item">
                     <a class="nav-link <?php echo $current_page == 'block-list.php' ? 'active' : ''; ?>" href="<?php echo APP_URL; ?>/pages/block-list.php">
                         <i class="fas fa-ban"></i> Block List
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link <?php echo $current_page == 'export.php' ? 'active' : ''; ?>" href="<?php echo APP_URL; ?>/pages/export.php">
+                        <i class="fas fa-archive"></i> Export logs
                     </a>
                 </li>
                 <li class="nav-item">
