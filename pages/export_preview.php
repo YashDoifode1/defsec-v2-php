@@ -34,8 +34,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['preview'])) {
     }
     
     if (!empty($ip_filter)) {
-        $sql .= " AND (ip LIKE :ip OR real_ip LIKE :ip)";
+        $sql .= " AND (ip LIKE :ip OR real_ip LIKE :real_ip)";
         $params[':ip'] = '%' . $ip_filter . '%';
+        $params[':real_ip'] = '%' . $ip_filter . '%';
     }
     
     if (!empty($country_filter) && $country_filter !== 'all') {
@@ -65,13 +66,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['preview'])) {
         $stmt->execute($params);
         $preview = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Get total count
-        $count_sql = str_replace("LIMIT 10", "", $sql);
-        $count_sql = preg_replace('/SELECT.*?FROM/', 'SELECT COUNT(*) as total FROM', $count_sql, 1);
-        $count_sql = preg_replace('/ORDER BY.*$/', '', $count_sql);
+        // Get total count with separate query
+        $count_sql = "SELECT COUNT(*) as total FROM logs WHERE user_id = :user_id AND website_id = :website_id";
+        $count_params = [
+            ':user_id' => $user_id,
+            ':website_id' => $website_id
+        ];
+        
+        if (!empty($start_date) && !empty($end_date)) {
+            $count_sql .= " AND timestamp BETWEEN :start_date AND :end_date";
+            $count_params[':start_date'] = $start_date;
+            $count_params[':end_date'] = $end_date . ' 23:59:59';
+        }
+        
+        if (!empty($ip_filter)) {
+            $count_sql .= " AND (ip LIKE :ip OR real_ip LIKE :real_ip)";
+            $count_params[':ip'] = '%' . $ip_filter . '%';
+            $count_params[':real_ip'] = '%' . $ip_filter . '%';
+        }
+        
+        if (!empty($country_filter) && $country_filter !== 'all') {
+            $count_sql .= " AND country LIKE :country";
+            $count_params[':country'] = '%' . $country_filter . '%';
+        }
+        
+        if ($vpn_filter !== '') {
+            $count_sql .= " AND is_vpn = :vpn";
+            $count_params[':vpn'] = (int)$vpn_filter;
+        }
+        
+        if ($tor_filter !== '') {
+            $count_sql .= " AND is_tor = :tor";
+            $count_params[':tor'] = (int)$tor_filter;
+        }
+        
+        if ($proxy_filter !== '') {
+            $count_sql .= " AND is_proxy = :proxy";
+            $count_params[':proxy'] = (int)$proxy_filter;
+        }
         
         $count_stmt = $pdo->prepare($count_sql);
-        $count_stmt->execute($params);
+        $count_stmt->execute($count_params);
         $total = $count_stmt->fetch()['total'];
         
         header('Content-Type: application/json');
@@ -81,7 +116,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['preview'])) {
         ]);
         
     } catch (PDOException $e) {
-        echo json_encode(['error' => $e->getMessage()]);
+        error_log("Preview error: " . $e->getMessage());
+        echo json_encode(['error' => 'Database error: ' . $e->getMessage()]);
     }
 }
 ?>

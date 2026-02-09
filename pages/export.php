@@ -48,8 +48,9 @@ if (isset($_GET['format']) && in_array($_GET['format'], ['csv', 'pdf', 'json']))
     
     // Add IP filter
     if (!empty($ip_filter)) {
-        $sql .= " AND (ip LIKE :ip OR real_ip LIKE :ip)";
+        $sql .= " AND (ip LIKE :ip OR real_ip LIKE :real_ip)";
         $params[':ip'] = '%' . $ip_filter . '%';
+        $params[':real_ip'] = '%' . $ip_filter . '%';
     }
     
     // Add country filter
@@ -80,6 +81,10 @@ if (isset($_GET['format']) && in_array($_GET['format'], ['csv', 'pdf', 'json']))
     $sql .= " ORDER BY $sort_column $sort_order";
     
     try {
+        // Debug: Log the SQL and parameters
+        error_log("Export SQL: " . $sql);
+        error_log("Export Params: " . print_r($params, true));
+        
         // Execute query using PDO
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
@@ -100,7 +105,8 @@ if (isset($_GET['format']) && in_array($_GET['format'], ['csv', 'pdf', 'json']))
         exit;
         
     } catch (PDOException $e) {
-        die("Database error: " . $e->getMessage());
+        error_log("Database error in export: " . $e->getMessage());
+        die("Database error: " . $e->getMessage() . "<br>SQL: " . $sql);
     }
 }
 
@@ -221,9 +227,6 @@ try {
                                 <button type="button" class="btn btn-secondary" onclick="resetFilters()">
                                     <i class="fas fa-redo me-2"></i> Reset Filters
                                 </button>
-                                <button type="button" class="btn btn-outline-light" onclick="showAdvancedFilters()">
-                                    <i class="fas fa-sliders-h me-2"></i> Advanced Filters
-                                </button>
                             </div>
                         </div>
                     </div>
@@ -273,7 +276,7 @@ try {
     </div>
 </div>
 
-<!-- Export Functions -->
+<!-- JavaScript -->
 <script>
 function exportData(format) {
     document.getElementById('format').value = format;
@@ -301,11 +304,6 @@ function resetFilters() {
     document.getElementById('proxy_filter').value = '';
     document.getElementById('sort').value = 'timestamp';
     loadPreview();
-}
-
-function showAdvancedFilters() {
-    // You can expand this to show more filters in a modal
-    alert('Advanced filters will be implemented in the next update.');
 }
 
 function loadPreview() {
