@@ -269,33 +269,38 @@ if ($isLoggedIn && $userId) {
         <div class="sidebar-menu">
             <ul class="nav flex-column">
                 <li class="nav-item">
-                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'index.php' ? 'active' : ''; ?>" href="index.php">
+                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'summery.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/pages/summery.php">
                         <i class="fas fa-home"></i> Dashboard
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'web-security.php' ? 'active' : ''; ?>" href="web-security.php">
+                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'security-dashboard.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/pages/security-dashboard.php">
+                        <i class="fas fa-home"></i> Security
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'web-security.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/pages/web-security.php">
                         <i class="fas fa-bug"></i> Attack Logs
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'vpn-monitoring.php' ? 'active' : ''; ?>" href="vpn-monitoring.php">
+                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'vpn-monitoring.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/pages/vpn-monitoring.php">
                         <i class="fas fa-shield-virus"></i> VPN Monitor
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'block-list.php' ? 'active' : ''; ?>" href="block-list.php">
+                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'block-list.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/pages/block-list.php">
                         <i class="fas fa-ban"></i> Block List
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'settings.php' ? 'active' : ''; ?>" href="settings.php">
+                    <a class="nav-link <?php echo basename($_SERVER['PHP_SELF']) == 'settings.php' ? 'active' : ''; ?>" href="http://localhost/defsec/v2/auth/settings.php">
                         <i class="fas fa-cog"></i> Settings
                     </a>
                 </li>
                 <?php if ($isLoggedIn): ?>
                 <li class="nav-item mt-4">
-                    <a class="nav-link text-danger" href="logout.php">
+                    <a class="nav-link text-danger" href="http://localhost/defsec/v2/logout.php">
                         <i class="fas fa-sign-out-alt"></i> Logout
                     </a>
                 </li>
@@ -315,7 +320,8 @@ if ($isLoggedIn && $userId) {
                 <h4 class="mb-0">
                     <?php
                     $page_titles = [
-                        'index.php' => 'Dashboard',
+                        'summery.php' => 'Dashboard',
+                        'security-dashboard.php' => 'Security',
                         'web-security.php' => 'Attack Logs',
                         'vpn-monitoring.php' => 'VPN Monitoring',
                         'block-list.php' => 'Block List',
@@ -336,10 +342,10 @@ if ($isLoggedIn && $userId) {
                         <?php echo htmlspecialchars($_SESSION['username'] ?? 'User'); ?>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="profile.php"><i class="fas fa-user me-2"></i> Profile</a></li>
-                        <li><a class="dropdown-item" href="settings.php"><i class="fas fa-cog me-2"></i> Settings</a></li>
+                        <li><a class="dropdown-item" href="http://localhost/defsec/v2/auth/profile.php"><i class="fas fa-user me-2"></i> Profile</a></li>
+                        <li><a class="dropdown-item" href="http://localhost/defsec/v2/auth/settings.php"><i class="fas fa-cog me-2"></i> Settings</a></li>
                         <li><hr class="dropdown-divider"></li>
-                        <li><a class="dropdown-item text-danger" href="logout.php"><i class="fas fa-sign-out-alt me-2"></i> Logout</a></li>
+                        <li><a class="dropdown-item text-danger" href="http://localhost/defsec/v2/auth/logout.php"><i class="fas fa-sign-out-alt me-2"></i> Logout</a></li>
                     </ul>
                 </div>
             </div>

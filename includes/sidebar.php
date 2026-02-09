@@ -110,7 +110,7 @@
             </div>
             <small class="text-muted">Last updated: <span id="lastUpdate">Just now</span></small>
         </div>
-        <a href="logout.php" class="logout-btn">
+        <a href="http://localhost/defsec/v2/logout.php" class="logout-btn">
             <i class="fas fa-sign-out-alt"></i>
             <span>Logout</span>
         </a>

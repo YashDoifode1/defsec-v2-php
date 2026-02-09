@@ -1,7 +1,7 @@
 <?php
 // session_start();
-require_once('includes/db.php');
-include 'includes/header.php'; // Your database connection file
+require_once('../includes/db.php');
+include '../includes/header.php'; // Your database connection file
 
 // Verify admin authentication
 // if (!isset($_SESSION['admin'])) {

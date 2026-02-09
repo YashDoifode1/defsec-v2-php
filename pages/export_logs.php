@@ -1,6 +1,6 @@
 <?php
 session_start();
-include 'includes/header.php';
+include '../includes/header.php';
 
 // Connect to Database
 $conn = new mysqli("localhost", "root", "", "mailfor");

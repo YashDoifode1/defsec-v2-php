@@ -1,6 +1,6 @@
 <?php
 // index.php - Dashboard
-require_once 'includes/header.php';
+require_once '../includes/header.php';
 
 // Check if user is logged in
 if (!$isLoggedIn) {
@@ -285,5 +285,5 @@ try {
 </script>
 
 <?php
-require_once 'includes/footer.php';
+require_once '../includes/footer.php';
 ?>

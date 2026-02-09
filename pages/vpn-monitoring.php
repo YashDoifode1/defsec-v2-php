@@ -1,7 +1,7 @@
 <?php
 // vpn-monitor.php
 // vpn-monitor.php
-require_once 'includes/header.php';
+require_once '../includes/header.php';
 
 // Check if user is logged in - fixed auth check
 if (!isset($_SESSION['user_id']) || empty($_SESSION['user_id'])) {

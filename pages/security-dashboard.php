@@ -1,8 +1,8 @@
 <?php
 // security-dashboard.php
 ob_start(); // Start output buffering
-require_once 'includes/header.php';
-require_once 'includes/auth.php';
+require_once '../includes/header.php';
+require_once '../includes/auth.php';
 
 // Check if user is logged in and variables are set
 if (!$auth->isLoggedIn()) {
@@ -721,5 +721,5 @@ foreach ($attackSummary as $row) {
 </style>
 
 <?php
-require_once 'includes/footer.php';
+require_once '../includes/footer.php';
 ?>

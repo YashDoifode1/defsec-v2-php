@@ -1,6 +1,6 @@
 <?php
 // web-security.php
-require_once 'includes/header.php';
+require_once '../includes/header.php';
 
 // Check if user is logged in - now using session directly since auth object not available
 if (!isset($_SESSION['user_id']) || empty($_SESSION['website_id'])) {
@@ -980,5 +980,5 @@ foreach ($logs as $log) {
 </style>
 
 <?php
-require_once 'includes/footer.php';
+require_once '../includes/footer.php';
 ?>

@@ -1,6 +1,6 @@
 <?php
 // user-tracker.php
-require_once 'includes/header.php';
+require_once '../includes/header.php';
 
 // Check if user is logged in
 if (!$auth->isLoggedIn()) {
@@ -737,5 +737,5 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
 </style>
 
 <?php
-require_once 'includes/footer.php';
+require_once '../includes/footer.php';
 ?>
