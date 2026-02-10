@@ -1,0 +1,8 @@
+[10-Feb-2026 00:45:00 UTC] PHP Notice:  session_start(): Ignoring session_start() because a session is already active in C:\xampp\htdocs\Defsec\v2\admin\admin_login.php on line 16
+[10-Feb-2026 00:45:00 UTC] Login attempt started
+[10-Feb-2026 00:45:00 UTC] Email entered: skidde7@gmail.com
+[10-Feb-2026 00:45:00 UTC] Calling admin_auth->login()
+[10-Feb-2026 00:45:01 UTC] Login result: true
+[10-Feb-2026 00:45:01 UTC] Login successful. Redirecting...
+[10-Feb-2026 00:45:01 UTC] PHP Notice:  session_start(): Ignoring session_start() because a session is already active in C:\xampp\htdocs\Defsec\v2\admin\admin_login.php on line 16
+[10-Feb-2026 00:45:19 UTC] PHP Notice:  session_start(): Ignoring session_start() because a session is already active in C:\xampp\htdocs\Defsec\v2\admin\admin_login.php on line 16

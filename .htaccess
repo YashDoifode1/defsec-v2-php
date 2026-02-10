@@ -1,6 +1,6 @@
 # Custom error pages
-ErrorDocument 400 /err/400.php
-ErrorDocument 401 /err/401.php
-ErrorDocument 403 /err/403.php
-ErrorDocument 404 /err/404.php
-ErrorDocument 500 /err/500.php
+ErrorDocument 400 http://localhost/defsec/v2/err/400.php
+ErrorDocument 401 http://localhost/defsec/v2/err/401.php
+ErrorDocument 403 http://localhost/defsec/v2/err/403.php
+ErrorDocument 404 http://localhost/defsec/v2/err/404.php
+ErrorDocument 500 http://localhost/defsec/v2/err/500.php
