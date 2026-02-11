@@ -506,16 +506,19 @@ $query_string = implode('&', $query_parts);
                             </td>
                             <td>
                                 <code><?php echo htmlspecialchars($log['ip_address']); ?></code>
-                                <button class="btn btn-sm btn-outline-info ms-1" onclick="showIPDetails('<?php echo htmlspecialchars($log['ip_address']); ?>')" title="View Details">
+                                <button class="btn btn-sm btn-outline-info ms-1 ip-details-btn" 
+                                        data-ip="<?php echo htmlspecialchars($log['ip_address']); ?>" 
+                                        title="View IP Details">
                                     <i class="fas fa-info-circle"></i>
                                 </button>
                             </td>
                             <td>
-                                <button class="btn btn-sm btn-outline-primary" onclick="toggleDetails(<?php echo $log['id']; ?>)">
+                                <button class="btn btn-sm btn-outline-primary toggle-details-btn" 
+                                        data-log-id="<?php echo $log['id']; ?>">
                                     <i class="fas fa-eye me-1"></i> Details
                                 </button>
                                 <a href="block-list.php?ip=<?php echo urlencode($log['ip_address']); ?>&website_id=<?php echo $websiteId; ?>" 
-                                   class="btn btn-sm btn-outline-danger ms-1" title="Block IP">
+                                   class="btn btn-sm btn-outline-danger ms-1 block-ip-btn" title="Block IP">
                                     <i class="fas fa-ban me-1"></i>
                                 </a>
                             </td>
@@ -620,16 +623,16 @@ $query_string = implode('&', $query_parts);
 
 <!-- IP Details Modal -->
 <div class="modal fade" id="ipDetailsModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content bg-dark">
             <div class="modal-header border-secondary">
-                <h5 class="modal-title">IP Address Details</h5>
+                <h5 class="modal-title"><i class="fas fa-info-circle me-2"></i>IP Address Details</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
                 <div id="ipDetailsContent">
-                    <div class="text-center py-3">
-                        <div class="spinner-border" role="status"></div>
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status"></div>
                         <p class="mt-2">Loading IP information...</p>
                     </div>
                 </div>
@@ -824,7 +827,7 @@ $query_string = implode('&', $query_parts);
     // Toggle details for a specific log
     function toggleDetails(logId) {
         const detailsRow = document.getElementById('details-' + logId);
-        const button = event.target.closest('button');
+        const button = document.querySelector(`button[data-log-id="${logId}"]`);
         
         if (detailsRow.classList.contains('d-none')) {
             detailsRow.classList.remove('d-none');
@@ -842,9 +845,11 @@ $query_string = implode('&', $query_parts);
     // Toggle all details
     function toggleAllDetails() {
         const allDetails = document.querySelectorAll('.details-row');
-        const buttons = document.querySelectorAll('button[onclick^="toggleDetails"]');
+        const buttons = document.querySelectorAll('.toggle-details-btn');
         
-        const shouldShow = allDetails.length > 0 && allDetails[0].classList.contains('d-none');
+        if (allDetails.length === 0) return;
+        
+        const shouldShow = allDetails[0].classList.contains('d-none');
         
         allDetails.forEach((details, index) => {
             if (shouldShow) {
@@ -865,13 +870,45 @@ $query_string = implode('&', $query_parts);
         });
     }
 
-    // Show IP details
-    function showIPDetails(ip) {
-        $('#ipDetailsModal').modal('show');
+    // Fetch IP details from ipinfo.io (free service)
+    async function fetchIPDetails(ip) {
+        try {
+            // Using ipinfo.io free service (no token required for basic info)
+            // Note: For production, get a free token from ipinfo.io to increase rate limits
+            const response = await fetch(`https://ipinfo.io/${ip}/json?token=free`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Error fetching IP details:', error);
+            return null;
+        }
+    }
+
+    // Show IP details modal
+    async function showIPDetails(ip) {
+        const modal = new bootstrap.Modal(document.getElementById('ipDetailsModal'));
         
-        // Simulate loading IP details (in production, this would be an API call)
-        setTimeout(() => {
-            $('#ipDetailsContent').html(`
+        // Show loading state
+        document.getElementById('ipDetailsContent').innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-primary" role="status"></div>
+                <p class="mt-2">Fetching IP information...</p>
+            </div>
+        `;
+        
+        modal.show();
+        
+        // Fetch IP details
+        const ipData = await fetchIPDetails(ip);
+        
+        if (!ipData) {
+            // Fallback to static data if API fails
+            document.getElementById('ipDetailsContent').innerHTML = `
                 <div class="row">
                     <div class="col-md-6">
                         <div class="mb-3">
@@ -881,76 +918,177 @@ $query_string = implode('&', $query_parts);
                             </div>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label text-muted">Country</label>
+                            <label class="form-label text-muted">IP Type</label>
                             <div class="form-control bg-dark text-light">
-                                Loading...
+                                ${ip.includes(':') ? 'IPv6' : 'IPv4'}
                             </div>
                         </div>
                     </div>
                     <div class="col-md-6">
                         <div class="mb-3">
-                            <label class="form-label text-muted">ISP</label>
+                            <label class="form-label text-muted">Threat Level</label>
                             <div class="form-control bg-dark text-light">
-                                Loading...
+                                <span class="badge bg-warning">Unknown</span>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Attack Count</label>
+                            <div class="form-control bg-dark text-light">
+                                <span class="badge bg-secondary">Not available</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="alert alert-warning mt-3">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    Could not fetch detailed IP information. The ipinfo.io service may be temporarily unavailable.
+                </div>
+            `;
+        } else {
+            // Display fetched IP data
+            const { city, region, country, loc, org, timezone, hostname } = ipData;
+            const [latitude, longitude] = loc ? loc.split(',') : ['', ''];
+            
+            let threatLevel = 'Low';
+            let threatColor = 'success';
+            
+            // Basic threat assessment based on known malicious IP patterns
+            if (org && (org.toLowerCase().includes('tor') || org.toLowerCase().includes('vpn'))) {
+                threatLevel = 'Medium';
+                threatColor = 'warning';
+            }
+            
+            // Check if IP is private/local
+            if (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.') || ip === '127.0.0.1') {
+                threatLevel = 'Local Network';
+                threatColor = 'info';
+            }
+            
+            document.getElementById('ipDetailsContent').innerHTML = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label text-muted">IP Address</label>
+                            <div class="form-control bg-dark text-light">
+                                <i class="fas fa-network-wired me-2"></i>${ip}
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Location</label>
+                            <div class="form-control bg-dark text-light">
+                                <i class="fas fa-map-marker-alt me-2"></i>
+                                ${city || 'Unknown'}, ${region || 'Unknown'}, ${country || 'Unknown'}
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Coordinates</label>
+                            <div class="form-control bg-dark text-light">
+                                <i class="fas fa-globe me-2"></i>
+                                ${latitude ? `${latitude}, ${longitude}` : 'Not available'}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label text-muted">ISP / Organization</label>
+                            <div class="form-control bg-dark text-light">
+                                <i class="fas fa-building me-2"></i>
+                                ${org || 'Unknown'}
                             </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label text-muted">Threat Level</label>
                             <div class="form-control bg-dark text-light">
-                                <span class="badge bg-warning">Analyzing...</span>
+                                <span class="badge bg-${threatColor}"><i class="fas fa-shield-alt me-1"></i>${threatLevel}</span>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Timezone</label>
+                            <div class="form-control bg-dark text-light">
+                                <i class="fas fa-clock me-2"></i>
+                                ${timezone || 'Not available'}
                             </div>
                         </div>
                     </div>
                 </div>
+                ${hostname ? `
+                <div class="mb-3">
+                    <label class="form-label text-muted">Hostname</label>
+                    <div class="form-control bg-dark text-light">
+                        <i class="fas fa-server me-2"></i>${hostname}
+                    </div>
+                </div>` : ''}
                 <div class="alert alert-info mt-3">
                     <i class="fas fa-info-circle me-2"></i>
-                    IP details are being analyzed. This feature requires external API integration.
+                    IP information provided by <a href="https://ipinfo.io" target="_blank" class="alert-link">ipinfo.io</a> free service.
+                    ${!loc ? '<br><small class="text-warning">Location data may be limited without an API token.</small>' : ''}
                 </div>
-            `);
-            
-            // Update block button link
-            $('#blockIpBtn').attr('href', 'block-list.php?ip=' + encodeURIComponent(ip) + '&website_id=<?php echo $websiteId; ?>');
-        }, 1000);
+            `;
+        }
+        
+        // Update block button link
+        document.getElementById('blockIpBtn').href = `block-list.php?ip=${encodeURIComponent(ip)}&website_id=<?php echo $websiteId; ?>`;
     }
 
-    // Update charts based on time range (simplified version)
+    // Update charts based on time range
     function updateCharts() {
-        const timeRange = $('#chartTimeRange').val();
+        const timeRange = document.getElementById('chartTimeRange').value;
         
         // Show loading state
-        $('#severityChart').html('<div class="text-center py-5"><div class="spinner-border text-light"></div><p class="mt-2 text-light">Loading...</p></div>');
-        $('#attackTypesChart').html('<div class="text-center py-5"><div class="spinner-border text-light"></div><p class="mt-2 text-light">Loading...</p></div>');
+        document.getElementById('severityChart').innerHTML = '<div class="text-center py-5"><div class="spinner-border text-light"></div><p class="mt-2 text-light">Loading...</p></div>';
+        document.getElementById('attackTypesChart').innerHTML = '<div class="text-center py-5"><div class="spinner-border text-light"></div><p class="mt-2 text-light">Loading...</p></div>';
         
-        // Reload page with new time range (simplified approach)
-        // In production, you would make an AJAX call to update charts
-        window.location.href = `?time_range=${timeRange}&<?php echo $query_string; ?>`;
+        // Reload page with new time range parameter
+        const url = new URL(window.location.href);
+        url.searchParams.set('time_range', timeRange);
+        window.location.href = url.toString();
     }
 
     // Initialize everything when page loads
-    $(document).ready(function() {
+    document.addEventListener('DOMContentLoaded', function() {
         // Initialize charts
         initSecurityScoreChart();
         initSeverityChart();
         initAttackTypesChart();
         
+        // Add event listeners for toggle details buttons
+        document.querySelectorAll('.toggle-details-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const logId = this.getAttribute('data-log-id');
+                toggleDetails(logId);
+            });
+        });
+        
+        // Add event listeners for IP details buttons
+        document.querySelectorAll('.ip-details-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const ip = this.getAttribute('data-ip');
+                showIPDetails(ip);
+            });
+        });
+        
+        // Add confirmation for export
+        document.querySelectorAll('a[href*="export"]').forEach(link => {
+            link.addEventListener('click', function(e) {
+                if (!confirm('Export attack logs to CSV?')) {
+                    e.preventDefault();
+                }
+            });
+        });
+        
+        // Add confirmation for IP blocking
+        document.querySelectorAll('.block-ip-btn').forEach(link => {
+            link.addEventListener('click', function(e) {
+                if (!confirm('Block this IP address?')) {
+                    e.preventDefault();
+                }
+            });
+        });
+        
         // Auto-refresh page every 60 seconds to get new data
         setTimeout(function() {
             window.location.reload();
         }, 60000);
-        
-        // Add confirmation for export
-        $('a[href*="export"]').on('click', function(e) {
-            if (!confirm('Export attack logs to CSV?')) {
-                e.preventDefault();
-            }
-        });
-        
-        // Add confirmation for IP blocking
-        $('a[href*="block-list.php"]').on('click', function(e) {
-            if (!confirm('Block this IP address?')) {
-                e.preventDefault();
-            }
-        });
     });
 </script>
 
@@ -1005,6 +1143,11 @@ $query_string = implode('&', $query_parts);
         transition: all 0.3s ease;
     }
     
+    /* IP details modal styling */
+    #ipDetailsModal .form-control {
+        border: 1px solid #495057;
+    }
+    
     /* ApexCharts tooltip dark theme */
     .apexcharts-tooltip {
         background: #212529 !important;
@@ -1037,6 +1180,27 @@ $query_string = implode('&', $query_parts);
             flex-wrap: wrap;
             gap: 5px;
         }
+        
+        #ipDetailsModal .modal-dialog {
+            margin: 0.5rem;
+        }
+    }
+    
+    /* IP details button hover effect */
+    .ip-details-btn:hover {
+        transform: scale(1.1);
+        transition: transform 0.2s;
+    }
+    
+    /* Loading animation for IP details */
+    @keyframes pulse {
+        0% { opacity: 0.6; }
+        50% { opacity: 1; }
+        100% { opacity: 0.6; }
+    }
+    
+    .loading-pulse {
+        animation: pulse 1.5s infinite;
     }
 </style>
 

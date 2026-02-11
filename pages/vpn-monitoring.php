@@ -9,7 +9,7 @@ require_once '../includes/header.php';
 
 // Check if user is logged in
 if (!isset($_SESSION['user_id']) || empty($_SESSION['user_id'])) {
-    header("Location: login.php");
+    header("Location: " . APP_URL . "/auth/login.php");
     exit();
 }
 
@@ -25,10 +25,64 @@ header('Cache-Control: post-check=0, pre-check=0', false);
 header('Pragma: no-cache');
 
 /* -------------------------------------------------
-   LOAD SETTINGS (SCOPED)
+   CREATE TABLES IF THEY DON'T EXIST
+------------------------------------------------- */
+try {
+    // Create settings table if it doesn't exist with proper structure
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS `settings` (
+            `id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            `user_id` bigint(20) UNSIGNED NOT NULL,
+            `website_id` bigint(20) UNSIGNED NOT NULL,
+            `setting_name` varchar(50) NOT NULL,
+            `setting_value` varchar(255) DEFAULT NULL,
+            `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY `unique_setting` (`user_id`, `website_id`, `setting_name`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ");
+    
+    // Create allowed_countries table if it doesn't exist with proper structure
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS `allowed_countries` (
+            `id` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            `user_id` bigint(20) UNSIGNED NOT NULL,
+            `website_id` bigint(20) UNSIGNED NOT NULL,
+            `country_code` varchar(2) NOT NULL,
+            `country_name` varchar(100) NOT NULL,
+            `is_allowed` tinyint(1) DEFAULT 1,
+            `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY `unique_country` (`user_id`, `website_id`, `country_code`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ");
+    
+    // Insert default settings if they don't exist
+    $defaultSettings = [
+        'block_vpn' => '0',
+        'strict_mode' => '0',
+        'geo_blocking' => '0'
+    ];
+    
+    foreach ($defaultSettings as $setting => $value) {
+        $check = $pdo->prepare("SELECT id FROM settings WHERE user_id = ? AND website_id = ? AND setting_name = ?");
+        $check->execute([$userId, $websiteId, $setting]);
+        
+        if (!$check->fetch()) {
+            $insert = $pdo->prepare("INSERT INTO settings (user_id, website_id, setting_name, setting_value) VALUES (?, ?, ?, ?)");
+            $insert->execute([$userId, $websiteId, $setting, $value]);
+        }
+    }
+    
+} catch (PDOException $e) {
+    error_log("Table creation error: " . $e->getMessage());
+}
+
+/* -------------------------------------------------
+   LOAD SETTINGS
 ------------------------------------------------- */
 $settings = [
-    'block_vpn'   => '0',
+    'block_vpn' => '0',
     'strict_mode' => '0',
     'geo_blocking' => '0'
 ];
@@ -46,23 +100,7 @@ try {
     }
     $stmt->closeCursor();
 } catch (PDOException $e) {
-    // Settings table might not exist or have different structure
-    // Try global settings without website_id
-    try {
-        $stmt = $pdo->prepare("
-            SELECT setting_name, setting_value
-            FROM settings
-            WHERE user_id = ?
-        ");
-        $stmt->execute([$userId]);
-        
-        while ($row = $stmt->fetch()) {
-            $settings[$row['setting_name']] = $row['setting_value'];
-        }
-        $stmt->closeCursor();
-    } catch (PDOException $e2) {
-        // Use defaults
-    }
+    error_log("Load settings error: " . $e->getMessage());
 }
 
 /* -------------------------------------------------
@@ -78,7 +116,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stored_token = $_SESSION['csrf_tokens']['vpn_settings'] ?? '';
     
     if ($csrf_token !== $stored_token || empty($csrf_token)) {
-        die('Invalid CSRF token');
+        $_SESSION['error'] = 'Invalid CSRF token. Please refresh the page and try again.';
+        header("Location: vpn-monitoring.php");
+        exit();
     }
 
     // Toggle country allow/block
@@ -89,7 +129,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $stmt = $pdo->prepare("
                     UPDATE allowed_countries
-                    SET is_allowed = NOT is_allowed
+                    SET is_allowed = NOT is_allowed,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE country_code = ?
                       AND user_id = ?
                       AND website_id = ?
@@ -97,11 +138,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute([$countryCode, $userId, $websiteId]);
                 $stmt->closeCursor();
                 
-                // Log the action
-                logAction($pdo, $userId, $websiteId, 'TOGGLE_COUNTRY', 
-                    "Toggled country status: {$countryCode}");
+                $_SESSION['success'] = "Country status updated successfully!";
+                
             } catch (PDOException $e) {
                 error_log("Toggle country error: " . $e->getMessage());
+                $_SESSION['error'] = "Failed to update country status: " . $e->getMessage();
             }
         }
     }
@@ -122,7 +163,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Update existing
                 $stmt = $pdo->prepare("
                     UPDATE settings 
-                    SET setting_value = ?
+                    SET setting_value = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE user_id = ? AND website_id = ? AND setting_name = 'block_vpn'
                 ");
                 $stmt->execute([$value, $userId, $websiteId]);
@@ -139,10 +180,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $checkStmt->closeCursor();
             $stmt->closeCursor();
             
-            logAction($pdo, $userId, $websiteId, 'VPN_SETTING', 
-                "VPN blocking set to: {$value}");
+            $_SESSION['success'] = "VPN blocking " . ($value == '1' ? 'enabled' : 'disabled') . " successfully!";
+            
         } catch (PDOException $e) {
             error_log("VPN block toggle error: " . $e->getMessage());
+            $_SESSION['error'] = "Failed to update VPN settings: " . $e->getMessage();
         }
     }
 
@@ -160,7 +202,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($checkStmt->fetch()) {
                 $stmt = $pdo->prepare("
                     UPDATE settings 
-                    SET setting_value = ?
+                    SET setting_value = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE user_id = ? AND website_id = ? AND setting_name = 'strict_mode'
                 ");
                 $stmt->execute([$value, $userId, $websiteId]);
@@ -176,10 +218,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $checkStmt->closeCursor();
             $stmt->closeCursor();
             
-            logAction($pdo, $userId, $websiteId, 'STRICT_MODE', 
-                "Strict mode set to: {$value}");
+            $_SESSION['success'] = "Strict mode " . ($value == '1' ? 'enabled' : 'disabled') . " successfully!";
+            
         } catch (PDOException $e) {
             error_log("Strict mode toggle error: " . $e->getMessage());
+            $_SESSION['error'] = "Failed to update strict mode: " . $e->getMessage();
         }
     }
 
@@ -197,7 +240,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($checkStmt->fetch()) {
                 $stmt = $pdo->prepare("
                     UPDATE settings 
-                    SET setting_value = ?
+                    SET setting_value = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE user_id = ? AND website_id = ? AND setting_name = 'geo_blocking'
                 ");
                 $stmt->execute([$value, $userId, $websiteId]);
@@ -213,10 +256,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $checkStmt->closeCursor();
             $stmt->closeCursor();
             
-            logAction($pdo, $userId, $websiteId, 'GEO_BLOCKING', 
-                "Geo-blocking set to: {$value}");
+            $_SESSION['success'] = "Geo-blocking " . ($value == '1' ? 'enabled' : 'disabled') . " successfully!";
+            
         } catch (PDOException $e) {
             error_log("Geo-blocking toggle error: " . $e->getMessage());
+            $_SESSION['error'] = "Failed to update geo-blocking: " . $e->getMessage();
         }
     }
 
@@ -227,39 +271,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $allowed = isset($_POST['new_country_allowed']) ? 1 : 0;
 
         if ($code && $name) {
-            try {
-                $checkStmt = $pdo->prepare("
-                    SELECT id FROM allowed_countries
-                    WHERE user_id = ? AND website_id = ? AND country_code = ?
-                ");
-                $checkStmt->execute([$userId, $websiteId, $code]);
-                
-                if ($checkStmt->fetch()) {
-                    $stmt = $pdo->prepare("
-                        UPDATE allowed_countries
-                        SET country_name = ?, is_allowed = ?
+            if (strlen($code) != 2) {
+                $_SESSION['error'] = "Country code must be exactly 2 characters (ISO 3166-1 alpha-2)";
+            } else {
+                try {
+                    $checkStmt = $pdo->prepare("
+                        SELECT id FROM allowed_countries
                         WHERE user_id = ? AND website_id = ? AND country_code = ?
                     ");
-                    $stmt->execute([$name, $allowed, $userId, $websiteId, $code]);
-                    $action = "updated";
-                } else {
-                    $stmt = $pdo->prepare("
-                        INSERT INTO allowed_countries
-                        (user_id, website_id, country_code, country_name, is_allowed)
-                        VALUES (?, ?, ?, ?, ?)
-                    ");
-                    $stmt->execute([$userId, $websiteId, $code, $name, $allowed]);
-                    $action = "added";
+                    $checkStmt->execute([$userId, $websiteId, $code]);
+                    
+                    if ($checkStmt->fetch()) {
+                        $stmt = $pdo->prepare("
+                            UPDATE allowed_countries
+                            SET country_name = ?, is_allowed = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE user_id = ? AND website_id = ? AND country_code = ?
+                        ");
+                        $stmt->execute([$name, $allowed, $userId, $websiteId, $code]);
+                        $action = "updated";
+                    } else {
+                        $stmt = $pdo->prepare("
+                            INSERT INTO allowed_countries
+                            (user_id, website_id, country_code, country_name, is_allowed)
+                            VALUES (?, ?, ?, ?, ?)
+                        ");
+                        $stmt->execute([$userId, $websiteId, $code, $name, $allowed]);
+                        $action = "added";
+                    }
+                    
+                    $checkStmt->closeCursor();
+                    $stmt->closeCursor();
+                    
+                    $_SESSION['success'] = "Country {$action} successfully: {$name} ({$code})";
+                    
+                } catch (PDOException $e) {
+                    error_log("Add country error: " . $e->getMessage());
+                    $_SESSION['error'] = "Failed to add country: " . $e->getMessage();
                 }
-                
-                $checkStmt->closeCursor();
-                $stmt->closeCursor();
-                
-                logAction($pdo, $userId, $websiteId, 'COUNTRY_ADDED', 
-                    "Country {$action}: {$name} ({$code}) - " . ($allowed ? "Allowed" : "Blocked"));
-            } catch (PDOException $e) {
-                error_log("Add country error: " . $e->getMessage());
             }
+        } else {
+            $_SESSION['error'] = "Please provide both country code and name";
         }
     }
     
@@ -278,10 +329,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute([$countryCode, $userId, $websiteId]);
                 $stmt->closeCursor();
                 
-                logAction($pdo, $userId, $websiteId, 'COUNTRY_DELETED', 
-                    "Country deleted: {$countryCode}");
+                $_SESSION['success'] = "Country deleted successfully: {$countryCode}";
+                
             } catch (PDOException $e) {
                 error_log("Delete country error: " . $e->getMessage());
+                $_SESSION['error'] = "Failed to delete country: " . $e->getMessage();
             }
         }
     }
@@ -327,12 +379,14 @@ try {
     $allowed_countries = array_filter($countries, function($c) { return $c['is_allowed']; });
     $blocked_countries = array_filter($countries, function($c) { return !$c['is_allowed']; });
     
-    // Get VPN detection stats from logs - FIXED to use correct table name
+    // Get VPN detection stats from logs - FIXED: Using correct logs table
     $vpnStatsQuery = $pdo->prepare("
         SELECT 
             COUNT(*) as total_blocked,
-            COUNT(CASE WHEN DATE(timestamp) = CURDATE() THEN 1 END) as today_blocked
-        FROM access_logs 
+            COUNT(CASE WHEN DATE(timestamp) = CURDATE() THEN 1 END) as today_blocked,
+            COUNT(CASE WHEN is_vpn = 1 THEN 1 END) as vpn_count,
+            COUNT(CASE WHEN is_proxy = 1 THEN 1 END) as proxy_count
+        FROM logs 
         WHERE user_id = ? AND website_id = ?
         AND (is_vpn = 1 OR is_proxy = 1)
         AND timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)
@@ -341,10 +395,10 @@ try {
     $vpn_stats_raw = $vpnStatsQuery->fetch();
     $vpnStatsQuery->closeCursor();
     
-    // Get top VPN countries - FIXED to use correct table name
+    // Get top VPN countries - FIXED: Using correct logs table
     $topCountriesQuery = $pdo->prepare("
         SELECT country, COUNT(*) as count
-        FROM access_logs 
+        FROM logs 
         WHERE user_id = ? AND website_id = ?
         AND (is_vpn = 1 OR is_proxy = 1)
         AND timestamp >= DATE_SUB(NOW(), INTERVAL 30 DAY)
@@ -360,6 +414,8 @@ try {
     $vpn_stats = [
         'total_blocked' => $vpn_stats_raw['total_blocked'] ?? 0,
         'today_blocked' => $vpn_stats_raw['today_blocked'] ?? 0,
+        'vpn_count' => $vpn_stats_raw['vpn_count'] ?? 0,
+        'proxy_count' => $vpn_stats_raw['proxy_count'] ?? 0,
         'top_countries' => array_column($top_countries, 'country')
     ];
     
@@ -372,6 +428,8 @@ try {
     $vpn_stats = [
         'total_blocked' => 0,
         'today_blocked' => 0,
+        'vpn_count' => 0,
+        'proxy_count' => 0,
         'top_countries' => []
     ];
 }
@@ -405,14 +463,15 @@ try {
         }
     }
     
-    // Add sorting
-    $sql .= " ORDER BY $sort_column $sort_order";
-    
     // Get total count
-    $countStmt = $pdo->prepare(str_replace('*', 'COUNT(*)', $sql));
+    $countSql = "SELECT COUNT(*) as total FROM (" . $sql . ") as filtered";
+    $countStmt = $pdo->prepare($countSql);
     $countStmt->execute($params);
     $total_countries_filtered = $countStmt->fetchColumn();
     $countStmt->closeCursor();
+    
+    // Add sorting
+    $sql .= " ORDER BY $sort_column $sort_order";
     
     // Add pagination
     $sql .= " LIMIT ? OFFSET ?";
@@ -433,30 +492,6 @@ try {
     $total_pages = 1;
 }
 
-/* -------------------------------------------------
-   HELPER FUNCTIONS
-------------------------------------------------- */
-function logAction($pdo, $userId, $websiteId, $actionType, $details) {
-    try {
-        $stmt = $pdo->prepare("
-            INSERT INTO action_logs (user_id, action_type, details, ip_address, user_agent, website_id, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, NOW())
-        ");
-        $stmt->execute([
-            $userId,
-            $actionType,
-            $details,
-            $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
-            $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown',
-            $websiteId
-        ]);
-        $stmt->closeCursor();
-    } catch (Exception $e) {
-        // Silently fail on logging errors
-        error_log("Log action error: " . $e->getMessage());
-    }
-}
-
 // Generate CSRF token
 if (!isset($_SESSION['csrf_tokens'])) {
     $_SESSION['csrf_tokens'] = [];
@@ -464,6 +499,25 @@ if (!isset($_SESSION['csrf_tokens'])) {
 $csrf_token = bin2hex(random_bytes(32));
 $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
 ?>
+
+<!-- Success/Error Messages -->
+<?php if (isset($_SESSION['success'])): ?>
+<div class="alert alert-success alert-dismissible fade show" role="alert">
+    <i class="fas fa-check-circle me-2"></i>
+    <?php echo htmlspecialchars($_SESSION['success']); ?>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+<?php unset($_SESSION['success']); ?>
+<?php endif; ?>
+
+<?php if (isset($_SESSION['error'])): ?>
+<div class="alert alert-danger alert-dismissible fade show" role="alert">
+    <i class="fas fa-exclamation-circle me-2"></i>
+    <?php echo htmlspecialchars($_SESSION['error']); ?>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+<?php unset($_SESSION['error']); ?>
+<?php endif; ?>
 
 <div class="row g-4 fade-in">
     <!-- Page Header -->
@@ -487,8 +541,12 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                                 Blocked Today: <span class="badge bg-warning float-end"><?php echo $vpn_stats['today_blocked']; ?></span>
                             </a></li>
                             <li><a class="dropdown-item" href="#">
-                                <i class="fas fa-ban text-danger me-2"></i>
-                                Total Blocked: <span class="badge bg-danger float-end"><?php echo $vpn_stats['total_blocked']; ?></span>
+                                <i class="fas fa-user-shield text-primary me-2"></i>
+                                VPN Detected: <span class="badge bg-primary float-end"><?php echo $vpn_stats['vpn_count']; ?></span>
+                            </a></li>
+                            <li><a class="dropdown-item" href="#">
+                                <i class="fas fa-network-wired text-info me-2"></i>
+                                Proxy Detected: <span class="badge bg-info float-end"><?php echo $vpn_stats['proxy_count']; ?></span>
                             </a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><h6 class="dropdown-header">Country Stats</h6></li>
@@ -503,7 +561,7 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                         </ul>
                     </div>
                     <a href="geolocation.php" class="btn btn-sm btn-outline-info">
-                        <i class="fas fa-map-marker-alt me-1"></i> View Geolocation
+                        <i class="fas fa-map-marker-alt me-1"></i> Geolocation
                     </a>
                 </div>
             </div>
@@ -518,7 +576,7 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                     <div class="card-icon text-danger">
                         <i class="fas fa-user-shield"></i>
                     </div>
-                    <div class="text-muted mb-1">VPN/Proxy Blocked</div>
+                    <div class="text-muted mb-1">VPN/Proxy Detected</div>
                     <div class="stat-number text-danger"><?php echo $vpn_stats['total_blocked']; ?></div>
                     <div class="stat-change <?php echo $vpn_stats['today_blocked'] > 0 ? 'negative' : 'positive'; ?>">
                         <i class="fas fa-<?php echo $vpn_stats['today_blocked'] > 0 ? 'arrow-up' : 'arrow-down'; ?> me-1"></i>
@@ -568,7 +626,7 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                         Active whitelist
                     </div>
                 </div>
-                <span class="badge bg-<?php echo $settings['strict_mode'] == '1' ? 'success' : 'secondary'; ?>">
+                <span class="badge bg-<?php echo $settings['strict_mode'] == '1' ? 'warning' : 'secondary'; ?>">
                     <?php echo $settings['strict_mode'] == '1' ? 'Strict' : 'Normal'; ?>
                 </span>
             </div>
@@ -680,12 +738,12 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                     <?php echo $settings['block_vpn'] == '1' ? 'Active' : 'Inactive'; ?>
                 </span>
             </div>
-            <form method="POST" id="vpnForm">
+            <form method="POST" id="vpnForm" class="ajax-form">
                 <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                <input type="hidden" name="toggle_vpn_block" value="1">
                 <div class="form-check form-switch mb-3">
                     <input class="form-check-input" type="checkbox" id="vpnBlockToggle" 
-                        name="block_vpn" value="1" <?= ($settings['block_vpn'] ?? '0') == '1' ? 'checked' : '' ?>
-                        onchange="document.getElementById('vpnForm').submit();">
+                        name="block_vpn" value="1" <?= $settings['block_vpn'] == '1' ? 'checked' : '' ?>>
                     <label class="form-check-label" for="vpnBlockToggle">
                         <strong>Block VPN/Proxy Connections</strong>
                         <div class="text-muted small mt-1">
@@ -693,7 +751,15 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                         </div>
                     </label>
                 </div>
-                <input type="hidden" name="toggle_vpn_block" value="1">
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">
+                        <i class="fas fa-info-circle me-1"></i>
+                        Detects: VPN <?php echo $vpn_stats['vpn_count']; ?>, Proxy <?php echo $vpn_stats['proxy_count']; ?>
+                    </small>
+                    <button type="submit" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-save me-1"></i> Save
+                    </button>
+                </div>
             </form>
             
             <div class="mt-3 pt-3 border-top">
@@ -702,7 +768,7 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                     <li>Blocks connections from known VPN IP ranges</li>
                     <li>Detects proxy servers and TOR nodes</li>
                     <li>Real-time updates to VPN databases</li>
-                    <li>Customizable exceptions available</li>
+                    <li>Logs all VPN/proxy attempts</li>
                 </ul>
             </div>
         </div>
@@ -716,12 +782,12 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                     <?php echo $settings['strict_mode'] == '1' ? 'Enabled' : 'Disabled'; ?>
                 </span>
             </div>
-            <form method="POST" id="strictForm">
+            <form method="POST" id="strictForm" class="ajax-form">
                 <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                <input type="hidden" name="toggle_strict_mode" value="1">
                 <div class="form-check form-switch mb-3">
                     <input class="form-check-input" type="checkbox" id="strictModeToggle" 
-                        name="strict_mode" value="1" <?= ($settings['strict_mode'] ?? '0') == '1' ? 'checked' : '' ?>
-                        onchange="document.getElementById('strictForm').submit();">
+                        name="strict_mode" value="1" <?= $settings['strict_mode'] == '1' ? 'checked' : '' ?>>
                     <label class="form-check-label" for="strictModeToggle">
                         <strong>Block countries not in allowed list</strong>
                         <div class="text-muted small mt-1">
@@ -729,13 +795,21 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                         </div>
                     </label>
                 </div>
-                <input type="hidden" name="toggle_strict_mode" value="1">
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">
+                        <i class="fas fa-info-circle me-1"></i>
+                        <?php echo $settings['strict_mode'] == '1' ? 'Only whitelisted allowed' : 'All countries allowed'; ?>
+                    </small>
+                    <button type="submit" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-save me-1"></i> Save
+                    </button>
+                </div>
             </form>
             
             <div class="mt-3 pt-3 border-top">
-                <div class="alert alert-<?php echo ($settings['strict_mode'] ?? '0') == '1' ? 'warning' : 'info'; ?> small">
-                    <i class="fas fa-<?php echo ($settings['strict_mode'] ?? '0') == '1' ? 'exclamation-triangle' : 'info-circle'; ?> me-2"></i>
-                    <?php echo ($settings['strict_mode'] ?? '0') == '1' ? 
+                <div class="alert alert-<?php echo $settings['strict_mode'] == '1' ? 'warning' : 'info'; ?> small">
+                    <i class="fas fa-<?php echo $settings['strict_mode'] == '1' ? 'exclamation-triangle' : 'info-circle'; ?> me-2"></i>
+                    <?php echo $settings['strict_mode'] == '1' ? 
                         '<strong>Warning:</strong> Strict mode enabled. All non-whitelisted countries will be blocked automatically.' : 
                         '<strong>Info:</strong> Strict mode disabled. All countries are allowed unless explicitly blocked.'; ?>
                 </div>
@@ -751,12 +825,12 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                     <?php echo $settings['geo_blocking'] == '1' ? 'Active' : 'Inactive'; ?>
                 </span>
             </div>
-            <form method="POST" id="geoForm">
+            <form method="POST" id="geoForm" class="ajax-form">
                 <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
+                <input type="hidden" name="toggle_geo_block" value="1">
                 <div class="form-check form-switch mb-3">
                     <input class="form-check-input" type="checkbox" id="geoBlockToggle" 
-                        name="geo_blocking" value="1" <?= ($settings['geo_blocking'] ?? '0') == '1' ? 'checked' : '' ?>
-                        onchange="document.getElementById('geoForm').submit();">
+                        name="geo_blocking" value="1" <?= $settings['geo_blocking'] == '1' ? 'checked' : '' ?>>
                     <label class="form-check-label" for="geoBlockToggle">
                         <strong>Enable Geo-Blocking</strong>
                         <div class="text-muted small mt-1">
@@ -764,7 +838,15 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                         </div>
                     </label>
                 </div>
-                <input type="hidden" name="toggle_geo_block" value="1">
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">
+                        <i class="fas fa-info-circle me-1"></i>
+                        Uses country database for filtering
+                    </small>
+                    <button type="submit" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-save me-1"></i> Save
+                    </button>
+                </div>
             </form>
             
             <div class="mt-3 pt-3 border-top">
@@ -805,7 +887,7 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                     <div class="input-group">
                         <span class="input-group-text"><i class="fas fa-flag"></i></span>
                         <input type="text" class="form-control" id="newCountryCode" name="new_country_code" 
-                               maxlength="2" required pattern="[A-Za-z]{2}" placeholder="US"
+                               maxlength="2" required pattern="[A-Z]{2}" placeholder="US"
                                oninput="this.value = this.value.toUpperCase()">
                     </div>
                     <div class="form-text">ISO 2-letter code (e.g., US, GB)</div>
@@ -973,7 +1055,7 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                                             title="View Details">
                                         <i class="fas fa-info-circle"></i>
                                     </button>
-                                    <form method="POST" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this country?')">
+                                    <form method="POST" class="d-inline" onsubmit="return confirm('Are you sure you want to delete <?php echo htmlspecialchars($country['country_name']); ?>?')">
                                         <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf_token); ?>">
                                         <input type="hidden" name="country_code" value="<?php echo htmlspecialchars($country['country_code']); ?>">
                                         <button type="submit" name="delete_country" class="btn btn-outline-danger" title="Delete">
@@ -1136,11 +1218,11 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                             <div class="timeline-marker bg-danger"></div>
                             <div class="timeline-content ms-3">
                                 <div class="d-flex justify-content-between">
-                                    <strong><?php echo $vpn_stats['today_blocked']; ?> VPNs blocked today</strong>
+                                    <strong><?php echo $vpn_stats['today_blocked']; ?> VPNs/Proxies detected today</strong>
                                     <small class="text-muted">Today</small>
                                 </div>
                                 <div class="small text-muted">
-                                    Total of <?php echo $vpn_stats['total_blocked']; ?> VPN/proxy connections blocked
+                                    <?php echo $vpn_stats['vpn_count']; ?> VPNs, <?php echo $vpn_stats['proxy_count']; ?> proxies
                                 </div>
                             </div>
                         </div>
@@ -1203,13 +1285,27 @@ $_SESSION['csrf_tokens']['vpn_settings'] = $csrf_token;
                                     <div class="col-6">
                                         <div class="text-center">
                                             <div class="h3 text-danger"><?php echo $vpn_stats['total_blocked']; ?></div>
-                                            <small class="text-muted">Total Blocked</small>
+                                            <small class="text-muted">Total Detected</small>
                                         </div>
                                     </div>
                                     <div class="col-6">
                                         <div class="text-center">
                                             <div class="h3 text-warning"><?php echo $vpn_stats['today_blocked']; ?></div>
                                             <small class="text-muted">Today</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row mt-2">
+                                    <div class="col-6">
+                                        <div class="text-center">
+                                            <div class="h4 text-primary"><?php echo $vpn_stats['vpn_count']; ?></div>
+                                            <small class="text-muted">VPNs</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="text-center">
+                                            <div class="h4 text-info"><?php echo $vpn_stats['proxy_count']; ?></div>
+                                            <small class="text-muted">Proxies</small>
                                         </div>
                                     </div>
                                 </div>
@@ -1275,43 +1371,6 @@ $(document).ready(function() {
         $('#newCountryCode').focus();
     }
 
-    // Show country suggestions
-    window.showCountrySuggestions = function() {
-        const suggestions = [
-            {code: 'US', name: 'United States', desc: 'Most traffic'},
-            {code: 'GB', name: 'United Kingdom', desc: 'European traffic'},
-            {code: 'DE', name: 'Germany', desc: 'EU traffic'},
-            {code: 'JP', name: 'Japan', desc: 'Asian traffic'},
-            {code: 'IN', name: 'India', desc: 'Growing market'}
-        ];
-        
-        let html = '<div class="row g-2">';
-        suggestions.forEach(s => {
-            html += `
-                <div class="col-md-6">
-                    <div class="card bg-dark border-secondary">
-                        <div class="card-body">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <strong>${s.name}</strong><br>
-                                    <small class="text-muted">${s.desc}</small>
-                                </div>
-                                <button type="button" class="btn btn-sm btn-outline-primary" 
-                                        onclick="setCountry('${s.code}', '${s.name}')">
-                                    Use
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        });
-        html += '</div>';
-        
-        // Show in modal or alert
-        alertify.alert('Country Suggestions', html);
-    }
-
     // Toggle country details
     window.toggleCountryDetails = function(countryCode) {
         const detailsRow = document.getElementById(`details-${countryCode}`);
@@ -1341,9 +1400,9 @@ $(document).ready(function() {
 
     // Show security info
     window.showSecurityInfo = function() {
-        alertify.alert('Security Level Info', `
+        const securityInfo = `
             <div class="alert alert-info">
-                <h6><i class="fas fa-info-circle me-2"></i>Security Score Calculation</h6>
+                <h6><i class="fas fa-info-circle me-2"></i>Security Level Calculation</h6>
                 <p>The security score is calculated based on:</p>
                 <ul>
                     <li><strong>VPN Blocking (30%):</strong> Blocks known VPN/proxy servers</li>
@@ -1352,7 +1411,35 @@ $(document).ready(function() {
                 </ul>
                 <p class="mb-0">Each enabled feature adds to your security score. Higher scores indicate better protection.</p>
             </div>
-        `);
+        `;
+        
+        // Create modal
+        const modalHtml = `
+            <div class="modal fade" id="securityInfoModal" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content bg-dark">
+                        <div class="modal-header border-secondary">
+                            <h5 class="modal-title"><i class="fas fa-info-circle me-2"></i>Security Level Info</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            ${securityInfo}
+                        </div>
+                        <div class="modal-footer border-secondary">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Add modal to body if not exists
+        if (!$('#securityInfoModal').length) {
+            $('body').append(modalHtml);
+        }
+        
+        // Show modal
+        new bootstrap.Modal(document.getElementById('securityInfoModal')).show();
     }
 
     // Sort table
@@ -1379,27 +1466,66 @@ $(document).ready(function() {
         window.location.href = queryString;
     }
 
-    // Auto-refresh stats every 60 seconds
+    // AJAX form submission
+    $('.ajax-form').on('submit', function(e) {
+        e.preventDefault();
+        
+        const form = $(this);
+        const submitBtn = form.find('button[type="submit"]');
+        const originalText = submitBtn.html();
+        
+        // Show loading
+        submitBtn.html('<i class="fas fa-spinner fa-spin me-1"></i> Saving...');
+        submitBtn.prop('disabled', true);
+        
+        $.ajax({
+            url: '',
+            method: 'POST',
+            data: form.serialize(),
+            success: function(response) {
+                // Reload page to show updated settings
+                location.reload();
+            },
+            error: function() {
+                alert('Error saving settings. Please try again.');
+                submitBtn.html(originalText);
+                submitBtn.prop('disabled', false);
+            }
+        });
+    });
+
+    // Auto-refresh stats every 30 seconds
     setInterval(function() {
+        // Update time display
+        const now = new Date();
+        $('.current-time').text(now.toLocaleTimeString());
+        
+        // Check for new VPN blocks
         $.ajax({
             url: 'api/get-vpn-stats.php',
             method: 'GET',
-            data: { website_id: <?php echo $websiteId; ?>, user_id: <?php echo $userId; ?> },
+            data: { 
+                user_id: <?php echo $userId; ?>,
+                website_id: <?php echo $websiteId; ?>,
+                current_total: <?php echo $vpn_stats['today_blocked']; ?>
+            },
             success: function(response) {
-                if (response.success && response.stats) {
-                    // Update counters
-                    if (response.stats.today_blocked != <?php echo $vpn_stats['today_blocked']; ?>) {
-                        // Show notification if there are new blocks
-                        if (response.stats.today_blocked > <?php echo $vpn_stats['today_blocked']; ?>) {
-                            showNotification('New VPN connections blocked', 'warning');
+                try {
+                    const data = JSON.parse(response);
+                    if (data.success && data.stats) {
+                        if (data.stats.today_blocked > <?php echo $vpn_stats['today_blocked']; ?>) {
+                            // Show notification
+                            showNotification('New VPN/proxy connection detected', 'warning');
+                            // Update page after 3 seconds
+                            setTimeout(() => location.reload(), 3000);
                         }
-                        // Reload page to show updated stats
-                        setTimeout(() => location.reload(), 5000);
                     }
+                } catch(e) {
+                    console.error('Error parsing VPN stats:', e);
                 }
             }
         });
-    }, 60000);
+    }, 30000);
 });
 
 // Show notification
@@ -1426,6 +1552,71 @@ function showNotification(message, type = 'info') {
     setTimeout(() => {
         alert.alert('close');
     }, 5000);
+}
+
+// Show country suggestions
+window.showCountrySuggestions = function() {
+    const suggestions = [
+        {code: 'US', name: 'United States', desc: 'Most traffic'},
+        {code: 'GB', name: 'United Kingdom', desc: 'European traffic'},
+        {code: 'DE', name: 'Germany', desc: 'EU traffic'},
+        {code: 'JP', name: 'Japan', desc: 'Asian traffic'},
+        {code: 'IN', name: 'India', desc: 'Growing market'},
+        {code: 'CA', name: 'Canada', desc: 'North America'},
+        {code: 'AU', name: 'Australia', desc: 'Oceania'},
+        {code: 'FR', name: 'France', desc: 'European Union'}
+    ];
+    
+    let html = '<div class="row g-2">';
+    suggestions.forEach(s => {
+        html += `
+            <div class="col-md-6">
+                <div class="card bg-dark border-secondary mb-2">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong class="d-block">${s.name}</strong>
+                                <small class="text-muted">${s.code} - ${s.desc}</small>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-primary" 
+                                    onclick="setCountry('${s.code}', '${s.name}'); $('#countrySuggestionsModal').modal('hide')">
+                                Use
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    html += '</div>';
+    
+    // Create modal if not exists
+    if (!$('#countrySuggestionsModal').length) {
+        const modalHtml = `
+            <div class="modal fade" id="countrySuggestionsModal" tabindex="-1">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content bg-dark">
+                        <div class="modal-header border-secondary">
+                            <h5 class="modal-title"><i class="fas fa-lightbulb me-2"></i>Country Suggestions</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            ${html}
+                        </div>
+                        <div class="modal-footer border-secondary">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        $('body').append(modalHtml);
+    } else {
+        $('#countrySuggestionsModal .modal-body').html(html);
+    }
+    
+    // Show modal
+    new bootstrap.Modal(document.getElementById('countrySuggestionsModal')).show();
 }
 </script>
 
@@ -1518,31 +1709,6 @@ function showNotification(message, type = 'info') {
     border-radius: 10px;
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .stat-number {
-        font-size: 2.2rem;
-    }
-    
-    .card-icon {
-        font-size: 2rem;
-    }
-    
-    .btn-group-sm {
-        flex-wrap: wrap;
-    }
-    
-    .timeline:before {
-        left: 10px;
-    }
-    
-    .timeline-marker {
-        left: -22px;
-        width: 12px;
-        height: 12px;
-    }
-}
-
 /* Animation for new blocks */
 @keyframes pulse {
     0% { transform: scale(1); }
@@ -1574,35 +1740,6 @@ function showNotification(message, type = 'info') {
     box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
 }
 
-/* Badge enhancements */
-.badge {
-    font-weight: 600;
-    padding: 0.35em 0.65em;
-}
-
-/* Table enhancements */
-.table-dark.table-striped > tbody > tr:nth-of-type(odd) {
-    background-color: rgba(255, 255, 255, 0.02);
-}
-
-.table-dark.table-hover > tbody > tr:hover {
-    background-color: rgba(0, 123, 255, 0.1);
-}
-
-/* Modal styling */
-.modal-content {
-    background: linear-gradient(145deg, #1a1a1a, #222222);
-    border: 1px solid #2a2a2a;
-}
-
-.modal-header {
-    border-bottom-color: #444;
-}
-
-.modal-footer {
-    border-top-color: #444;
-}
-
 /* Alert styling */
 .alert {
     border: none;
@@ -1627,6 +1764,31 @@ function showNotification(message, type = 'info') {
 .alert-danger {
     background-color: rgba(220, 53, 69, 0.15);
     border-left: 4px solid #dc3545;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .stat-number {
+        font-size: 2.2rem;
+    }
+    
+    .card-icon {
+        font-size: 2rem;
+    }
+    
+    .btn-group-sm {
+        flex-wrap: wrap;
+    }
+    
+    .timeline:before {
+        left: 10px;
+    }
+    
+    .timeline-marker {
+        left: -22px;
+        width: 12px;
+        height: 12px;
+    }
 }
 </style>
 

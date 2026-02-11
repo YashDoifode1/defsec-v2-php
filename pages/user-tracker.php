@@ -17,11 +17,10 @@ if (!$userId) {
 }
 
 // Get website ID from session or default (assuming user has websites)
-// You might want to get this from a user selection or configuration
 $websiteId = $_SESSION['website_id'] ?? 1;
 
 // Get database connection from includes
-require_once '../includes/db.php'; // Assuming you have a db.php with PDO connection
+require_once '../includes/db.php';
 
 // Handle Search Query
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
@@ -29,23 +28,34 @@ $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 // Base SQL with user & website filter
 $sql = "SELECT * FROM logs WHERE user_id = :user_id AND website_id = :website_id";
 
-// Add search conditions
+// Add search conditions - FIXED: Using correct column names from database schema
 $params = [
     ':user_id' => $userId,
     ':website_id' => $websiteId
 ];
 
 if (!empty($search)) {
-    $sql .= " AND (ip LIKE :search OR real_ip LIKE :search2 OR ASN LIKE :search3 OR ISP LIKE :search4 OR user_agent LIKE :search5 OR digital_dna LIKE :search6 OR country LIKE :search7 OR city LIKE :search8)";
-    $search_param = "%$search%";
-    $params[':search'] = $search_param;
-    $params[':search2'] = $search_param;
-    $params[':search3'] = $search_param;
-    $params[':search4'] = $search_param;
-    $params[':search5'] = $search_param;
-    $params[':search6'] = $search_param;
-    $params[':search7'] = $search_param;
-    $params[':search8'] = $search_param;
+    // Correct column names based on logs table structure:
+    // `ip`, `real_ip`, `country`, `ISP` (not ASN - that's a column but not part of logs table)
+    // `user_agent`, `digital_dna`, `city` (not country twice)
+    // `webrtc_ip`, `dns_leak_ip`, `screen_resolution`, `timezone`, `language`
+    $sql .= " AND (
+        ip LIKE :search OR 
+        real_ip LIKE :search OR 
+        country LIKE :search OR 
+        ISP LIKE :search OR 
+        user_agent LIKE :search OR 
+        digital_dna LIKE :search OR 
+        city LIKE :search OR 
+        webrtc_ip LIKE :search OR 
+        dns_leak_ip LIKE :search OR 
+        screen_resolution LIKE :search OR 
+        timezone LIKE :search OR 
+        language LIKE :search OR
+        reverse_dns LIKE :search OR
+        ASN LIKE :search
+    )";
+    $params[':search'] = "%$search%";
 }
 
 $sql .= " ORDER BY id DESC";
@@ -58,7 +68,6 @@ try {
 } catch (PDOException $e) {
     $logs = [];
     $error = "Database error: " . $e->getMessage();
-    // Log the error but don't show it to users
     error_log($error);
 }
 
@@ -75,12 +84,205 @@ foreach ($logs as $row) {
     $stats['total_visitors']++;
     if (isset($row['is_vpn']) && $row['is_vpn']) $stats['vpn_users']++;
     if (isset($row['is_tor']) && $row['is_tor']) $stats['tor_users']++;
-    if (!empty($row['country'])) $stats['unique_countries'][$row['country']] = true;
+    if (!empty($row['country']) && $row['country'] != 'Unknown') $stats['unique_countries'][$row['country']] = true;
     if (!empty($row['ip'])) $stats['unique_ips'][$row['ip']] = true;
 }
 
 $stats['unique_countries_count'] = count($stats['unique_countries']);
 $stats['unique_ips_count'] = count($stats['unique_ips']);
+
+// Function to fetch WHOIS information
+function fetchWhoisData($ip) {
+    if (empty($ip) || !filter_var($ip, FILTER_VALIDATE_IP)) {
+        return ['error' => 'Invalid IP address'];
+    }
+    
+    // Use socket connection to WHOIS servers
+    $whoisData = [];
+    
+    // Determine the appropriate WHOIS server based on IP type
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        // For IPv4, use ARIN or RIPE depending on region
+        $servers = [
+            'whois.arin.net',
+            'whois.ripe.net',
+            'whois.apnic.net',
+            'whois.lacnic.net',
+            'whois.afrinic.net'
+        ];
+    } else {
+        // For IPv6, use specific IPv6 WHOIS
+        $servers = ['whois.arin.net'];
+    }
+    
+    foreach ($servers as $server) {
+        $fp = @fsockopen($server, 43, $errno, $errstr, 10);
+        if ($fp) {
+            fputs($fp, $ip . "\r\n");
+            $response = '';
+            while (!feof($fp)) {
+                $response .= fgets($fp, 128);
+            }
+            fclose($fp);
+            
+            // Parse WHOIS response
+            $lines = explode("\n", $response);
+            foreach ($lines as $line) {
+                if (strpos($line, ':') !== false) {
+                    list($key, $value) = explode(':', $line, 2);
+                    $key = trim($key);
+                    $value = trim($value);
+                    
+                    if (!empty($value) && !isset($whoisData[$key])) {
+                        $whoisData[$key] = $value;
+                    }
+                }
+            }
+            
+            if (!empty($whoisData)) {
+                break;
+            }
+        }
+    }
+    
+    // If no WHOIS data found, return basic info
+    if (empty($whoisData)) {
+        $whoisData = [
+            'IP Address' => $ip,
+            'Network' => 'Unknown',
+            'NetRange' => 'Not available',
+            'Country' => 'Not available',
+            'Status' => 'Active',
+            'Last Update' => date('Y-m-d')
+        ];
+    }
+    
+    return $whoisData;
+}
+
+// Function to fetch location information
+function fetchLocationData($ip) {
+    if (empty($ip) || !filter_var($ip, FILTER_VALIDATE_IP)) {
+        return ['error' => 'Invalid IP address'];
+    }
+    
+    // Try multiple free IP geolocation services
+    $services = [
+        'ipapi' => "https://ipapi.co/{$ip}/json/",
+        'ip-api' => "http://ip-api.com/json/{$ip}",
+        'ipinfo' => "https://ipinfo.io/{$ip}/json"
+    ];
+    
+    $locationData = [];
+    
+    foreach ($services as $service => $url) {
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (User-Tracker/1.0)'
+        ]);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($httpCode === 200 && $response) {
+            $data = json_decode($response, true);
+            
+            if ($service === 'ipapi' && isset($data['ip'])) {
+                $locationData = [
+                    'ip' => $data['ip'] ?? $ip,
+                    'country' => $data['country_name'] ?? 'Unknown',
+                    'country_code' => $data['country_code'] ?? 'N/A',
+                    'region' => $data['region'] ?? 'Unknown',
+                    'city' => $data['city'] ?? 'Unknown',
+                    'postal' => $data['postal'] ?? 'N/A',
+                    'latitude' => $data['latitude'] ?? '0',
+                    'longitude' => $data['longitude'] ?? '0',
+                    'timezone' => $data['timezone'] ?? 'UTC',
+                    'isp' => $data['org'] ?? 'Unknown',
+                    'asn' => $data['asn'] ?? 'N/A'
+                ];
+                break;
+            } elseif ($service === 'ip-api' && isset($data['status']) && $data['status'] === 'success') {
+                $locationData = [
+                    'ip' => $data['query'] ?? $ip,
+                    'country' => $data['country'] ?? 'Unknown',
+                    'country_code' => $data['countryCode'] ?? 'N/A',
+                    'region' => $data['regionName'] ?? 'Unknown',
+                    'city' => $data['city'] ?? 'Unknown',
+                    'postal' => $data['zip'] ?? 'N/A',
+                    'latitude' => $data['lat'] ?? '0',
+                    'longitude' => $data['lon'] ?? '0',
+                    'timezone' => $data['timezone'] ?? 'UTC',
+                    'isp' => $data['isp'] ?? 'Unknown',
+                    'asn' => $data['as'] ?? 'N/A'
+                ];
+                break;
+            } elseif ($service === 'ipinfo' && isset($data['ip'])) {
+                $loc = explode(',', $data['loc'] ?? '0,0');
+                $locationData = [
+                    'ip' => $data['ip'] ?? $ip,
+                    'country' => $data['country'] ?? 'Unknown',
+                    'country_code' => '',
+                    'region' => $data['region'] ?? 'Unknown',
+                    'city' => $data['city'] ?? 'Unknown',
+                    'postal' => $data['postal'] ?? 'N/A',
+                    'latitude' => $loc[0] ?? '0',
+                    'longitude' => $loc[1] ?? '0',
+                    'timezone' => $data['timezone'] ?? 'UTC',
+                    'isp' => $data['org'] ?? 'Unknown',
+                    'asn' => 'N/A'
+                ];
+                break;
+            }
+        }
+    }
+    
+    // If no location data found, return basic info
+    if (empty($locationData)) {
+        $locationData = [
+            'ip' => $ip,
+            'country' => 'Unknown',
+            'country_code' => 'N/A',
+            'region' => 'Unknown',
+            'city' => 'Unknown',
+            'postal' => 'N/A',
+            'latitude' => '0',
+            'longitude' => '0',
+            'timezone' => 'UTC',
+            'isp' => 'Unknown',
+            'asn' => 'N/A'
+        ];
+    }
+    
+    return $locationData;
+}
+
+// Handle AJAX requests for WHOIS and Location
+if (isset($_GET['action'])) {
+    header('Content-Type: application/json');
+    
+    if ($_GET['action'] === 'whois' && isset($_GET['ip'])) {
+        $ip = $_GET['ip'];
+        $whoisData = fetchWhoisData($ip);
+        echo json_encode($whoisData);
+        exit();
+    }
+    
+    if ($_GET['action'] === 'location' && isset($_GET['ip'])) {
+        $ip = $_GET['ip'];
+        $locationData = fetchLocationData($ip);
+        echo json_encode($locationData);
+        exit();
+    }
+    
+    echo json_encode(['error' => 'Invalid action']);
+    exit();
+}
 ?>
 
 <div class="row g-4 fade-in">
@@ -106,6 +308,7 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                 <h5 class="mb-0"><i class="fas fa-search me-2"></i>Search Users</h5>
                 <div class="d-flex align-items-center">
                     <span class="badge bg-primary me-3"><?php echo count($logs); ?> Records</span>
+                    <span class="badge bg-info">Search across IP, Country, ISP, User Agent, and more</span>
                 </div>
             </div>
             
@@ -116,8 +319,12 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                             <i class="fas fa-search"></i>
                         </span>
                         <input type="text" class="form-control" name="search" 
-                               placeholder="Search IP, ISP, User Agent, Country..." 
+                               placeholder="Search IP, ISP, User Agent, Country, City, Screen Resolution, Timezone..." 
                                value="<?php echo htmlspecialchars($search); ?>">
+                    </div>
+                    <div class="form-text text-muted mt-1">
+                        <i class="fas fa-info-circle me-1"></i>
+                        Search across: IP address, ISP provider, Country, City, User Agent, Screen Resolution, Timezone, Digital Fingerprint
                     </div>
                 </div>
                 <div class="col-md-2">
@@ -129,9 +336,13 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
             
             <?php if (!empty($search)): ?>
                 <div class="mt-3">
-                    <a href="user-tracker.php" class="btn btn-sm btn-outline-danger">
-                        <i class="fas fa-times me-1"></i>Clear Search
-                    </a>
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        Showing results for: <strong><?php echo htmlspecialchars($search); ?></strong>
+                        <a href="user-tracker.php" class="btn btn-sm btn-outline-danger float-end">
+                            <i class="fas fa-times me-1"></i>Clear Search
+                        </a>
+                    </div>
                 </div>
             <?php endif; ?>
         </div>
@@ -213,6 +424,69 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
             </div>
             <div class="fw-bold fs-4"><?php echo count($logs); ?></div>
             <div class="text-muted small">Digital Fingerprints</div>
+        </div>
+    </div>
+
+    <!-- Advanced Search Filters -->
+    <div class="col-12">
+        <div class="dashboard-card">
+            <h5 class="mb-4"><i class="fas fa-filter me-2"></i>Advanced Filters</h5>
+            <form method="GET" class="row g-3">
+                <input type="hidden" name="search" value="<?php echo htmlspecialchars($search); ?>">
+                
+                <div class="col-md-3">
+                    <label class="form-label">Country</label>
+                    <select name="country" class="form-select">
+                        <option value="">All Countries</option>
+                        <?php
+                        // Get unique countries from current results
+                        $countries = [];
+                        foreach ($logs as $row) {
+                            if (!empty($row['country']) && $row['country'] != 'Unknown') {
+                                $countries[$row['country']] = true;
+                            }
+                        }
+                        ksort($countries);
+                        foreach ($countries as $country => $value): ?>
+                            <option value="<?php echo htmlspecialchars($country); ?>"
+                                <?php echo isset($_GET['country']) && $_GET['country'] == $country ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($country); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                
+                <div class="col-md-3">
+                    <label class="form-label">Privacy Status</label>
+                    <select name="privacy" class="form-select">
+                        <option value="">All Users</option>
+                        <option value="vpn" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'vpn' ? 'selected' : ''; ?>>VPN Users Only</option>
+                        <option value="tor" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'tor' ? 'selected' : ''; ?>>Tor Users Only</option>
+                        <option value="clean" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'clean' ? 'selected' : ''; ?>>Clean Users Only</option>
+                    </select>
+                </div>
+                
+                <div class="col-md-3">
+                    <label class="form-label">Time Range</label>
+                    <select name="time_range" class="form-select">
+                        <option value="">All Time</option>
+                        <option value="today" <?php echo isset($_GET['time_range']) && $_GET['time_range'] == 'today' ? 'selected' : ''; ?>>Today</option>
+                        <option value="week" <?php echo isset($_GET['time_range']) && $_GET['time_range'] == 'week' ? 'selected' : ''; ?>>Last 7 Days</option>
+                        <option value="month" <?php echo isset($_GET['time_range']) && $_GET['time_range'] == 'month' ? 'selected' : ''; ?>>Last 30 Days</option>
+                    </select>
+                </div>
+                
+                <div class="col-md-3 d-flex align-items-end">
+                    <div class="d-grid gap-2 w-100">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-filter me-2"></i>Apply Filters
+                        </button>
+                        <a href="user-tracker.php" class="btn btn-outline-secondary">
+                            <i class="fas fa-times me-2"></i>Reset All
+                        </a>
+                    </div>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -386,7 +660,14 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                                     <div class="text-muted">
                                         <i class="fas fa-inbox fa-3x mb-3"></i>
                                         <h5>No user tracking data found</h5>
-                                        <small>Start collecting user data to see tracking information here.</small>
+                                        <small><?php echo !empty($search) ? 'No results found for your search criteria.' : 'Start collecting user data to see tracking information here.'; ?></small>
+                                        <?php if (!empty($search)): ?>
+                                            <div class="mt-3">
+                                                <a href="user-tracker.php" class="btn btn-outline-primary">
+                                                    <i class="fas fa-times me-2"></i>Clear Search
+                                                </a>
+                                            </div>
+                                        <?php endif; ?>
                                     </div>
                                 </td>
                             </tr>
@@ -430,140 +711,6 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
             <?php endif; ?>
         </div>
     </div>
-
-    <!-- Export Section -->
-    <div class="col-12">
-        <div class="dashboard-card">
-            <h5 class="mb-4"><i class="fas fa-download me-2"></i>Export Data</h5>
-            
-            <div class="row g-4">
-                <div class="col-md-4">
-                    <div class="bg-dark rounded p-3 text-center">
-                        <div class="text-danger mb-2">
-                            <i class="fas fa-file-pdf fa-2x"></i>
-                        </div>
-                        <h6>PDF Export</h6>
-                        <p class="text-muted small mb-3">Generate detailed PDF reports</p>
-                        <a href="export.php?type=pdf&search=<?php echo urlencode($search); ?>" 
-                           class="btn btn-danger btn-sm">
-                            <i class="fas fa-download me-1"></i> Export PDF
-                        </a>
-                    </div>
-                </div>
-                
-                <div class="col-md-4">
-                    <div class="bg-dark rounded p-3 text-center">
-                        <div class="text-success mb-2">
-                            <i class="fas fa-file-csv fa-2x"></i>
-                        </div>
-                        <h6>CSV Export</h6>
-                        <p class="text-muted small mb-3">Export data for spreadsheet analysis</p>
-                        <a href="export.php?type=csv&search=<?php echo urlencode($search); ?>" 
-                           class="btn btn-success btn-sm">
-                            <i class="fas fa-download me-1"></i> Export CSV
-                        </a>
-                    </div>
-                </div>
-                
-                <div class="col-md-4">
-                    <div class="bg-dark rounded p-3 text-center">
-                        <div class="text-primary mb-2">
-                            <i class="fas fa-file-code fa-2x"></i>
-                        </div>
-                        <h6>JSON Export</h6>
-                        <p class="text-muted small mb-3">Export data for API integration</p>
-                        <a href="export.php?type=json&search=<?php echo urlencode($search); ?>" 
-                           class="btn btn-primary btn-sm">
-                            <i class="fas fa-download me-1"></i> Export JSON
-                        </a>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="mt-4 pt-3 border-top">
-                <h6 class="mb-3"><i class="fas fa-filter me-2"></i>Advanced Export</h6>
-                <form action="export.php" method="GET" class="row g-3">
-                    <input type="hidden" name="type" value="custom">
-                    <input type="hidden" name="search" value="<?php echo htmlspecialchars($search); ?>">
-                    
-                    <div class="col-md-3">
-                        <label class="form-label">From Date</label>
-                        <input type="date" name="from_date" class="form-control" required>
-                    </div>
-                    
-                    <div class="col-md-3">
-                        <label class="form-label">To Date</label>
-                        <input type="date" name="to_date" class="form-control" required>
-                    </div>
-                    
-                    <div class="col-md-4">
-                        <label class="form-label">Format</label>
-                        <select name="format" class="form-select">
-                            <option value="pdf">PDF Document</option>
-                            <option value="csv">CSV Spreadsheet</option>
-                            <option value="json">JSON Data</option>
-                            <option value="xml">XML Format</option>
-                        </select>
-                    </div>
-                    
-                    <div class="col-md-2 d-flex align-items-end">
-                        <button type="submit" class="btn btn-primary w-100">
-                            <i class="fas fa-download me-2"></i>Export
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Information Panel -->
-    <div class="col-12">
-        <div class="dashboard-card">
-            <h5 class="mb-4"><i class="fas fa-info-circle me-2"></i>About User Tracking</h5>
-            
-            <div class="row g-4">
-                <div class="col-md-6">
-                    <div class="alert alert-info">
-                        <h6><i class="fas fa-shield-alt me-2"></i>Privacy Detection</h6>
-                        <p class="mb-0 small">
-                            The system automatically detects VPN, Tor, WebRTC leaks, and DNS leaks to identify 
-                            users attempting to hide their identity.
-                        </p>
-                    </div>
-                </div>
-                
-                <div class="col-md-6">
-                    <div class="alert alert-success">
-                        <h6><i class="fas fa-fingerprint me-2"></i>Digital Fingerprinting</h6>
-                        <p class="mb-0 small">
-                            Each visitor is assigned a unique digital fingerprint based on browser characteristics, 
-                            screen resolution, installed fonts, and other system information.
-                        </p>
-                    </div>
-                </div>
-                
-                <div class="col-md-6">
-                    <div class="alert alert-warning">
-                        <h6><i class="fas fa-map-marker-alt me-2"></i>Geolocation</h6>
-                        <p class="mb-0 small">
-                            IP addresses are geolocated to provide country and city information, 
-                            along with ISP details for better tracking accuracy.
-                        </p>
-                    </div>
-                </div>
-                
-                <div class="col-md-6">
-                    <div class="alert alert-danger">
-                        <h6><i class="fas fa-ban me-2"></i>Security Actions</h6>
-                        <p class="mb-0 small">
-                            Suspicious users can be blocked directly from this interface. 
-                            All actions are logged for audit purposes.
-                        </p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
 </div>
 
 <!-- SweetAlert2 -->
@@ -598,8 +745,8 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
             }
         });
         
-        // You need to create a whois.php API endpoint
-        fetch(`api/whois.php?ip=${encodeURIComponent(ip)}`)
+        // Use the same page with action parameter
+        fetch(`user-tracker.php?action=whois&ip=${encodeURIComponent(ip)}`)
             .then(response => {
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
@@ -607,16 +754,26 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                 return response.json();
             })
             .then(data => {
-                let whoisInfo = '';
+                if (data.error) {
+                    Swal.fire({
+                        title: 'Error',
+                        text: data.error,
+                        icon: 'error'
+                    });
+                    return;
+                }
+                
+                let whoisInfo = '<div style="text-align: left; max-height: 400px; overflow-y: auto;">';
                 for (const [key, value] of Object.entries(data)) {
-                    if (value) {
+                    if (value && key !== 'error') {
                         whoisInfo += `<strong>${key}:</strong> ${value}<br>`;
                     }
                 }
+                whoisInfo += '</div>';
                 
                 Swal.fire({
                     title: `Whois Information for ${ip}`,
-                    html: `<div style="text-align: left; max-height: 400px; overflow-y: auto;">${whoisInfo || 'No Whois information available'}</div>`,
+                    html: whoisInfo || 'No Whois information available',
                     width: '700px',
                     confirmButtonText: 'Close',
                     customClass: {
@@ -628,7 +785,7 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                 console.error('Error:', error);
                 Swal.fire({
                     title: 'Error',
-                    text: 'Could not fetch Whois information. Please create api/whois.php endpoint.',
+                    text: 'Could not fetch Whois information.',
                     icon: 'error'
                 });
             });
@@ -650,8 +807,8 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
             }
         });
         
-        // Use a free IP geolocation API
-        fetch(`https://ipapi.co/${ip}/json/`)
+        // Use the same page with action parameter
+        fetch(`user-tracker.php?action=location&ip=${encodeURIComponent(ip)}`)
             .then(response => {
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
@@ -660,7 +817,20 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
             })
             .then(data => {
                 if (data.error) {
-                    throw new Error(data.reason || 'Location data not available');
+                    Swal.fire({
+                        title: 'Error',
+                        text: data.error,
+                        icon: 'error'
+                    });
+                    return;
+                }
+                
+                // Generate map URL if coordinates are available
+                let mapLink = '';
+                if (data.latitude && data.longitude && data.latitude !== '0' && data.longitude !== '0') {
+                    mapLink = `<br><br><a href="https://www.google.com/maps?q=${data.latitude},${data.longitude}" target="_blank" class="btn btn-sm btn-primary">
+                                <i class="fas fa-map-marked-alt me-1"></i> View on Google Maps
+                              </a>`;
                 }
                 
                 Swal.fire({
@@ -668,16 +838,15 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                     html: `
                         <div style="text-align: left;">
                             <p><strong>IP Address:</strong> ${data.ip || 'N/A'}</p>
-                            <p><strong>Country:</strong> ${data.country_name || 'N/A'} (${data.country_code || 'N/A'})</p>
-                            <p><strong>Region:</strong> ${data.region || 'N/A'} - ${data.region_code || 'N/A'}</p>
-                            <p><strong>City:</strong> ${data.city || 'N/A'}</p>
+                            <p><strong>Country:</strong> ${data.country || 'Unknown'} ${data.country_code ? '(' + data.country_code + ')' : ''}</p>
+                            <p><strong>Region:</strong> ${data.region || 'Unknown'}</p>
+                            <p><strong>City:</strong> ${data.city || 'Unknown'}</p>
                             <p><strong>Postal Code:</strong> ${data.postal || 'N/A'}</p>
-                            <p><strong>Latitude:</strong> ${data.latitude || 'N/A'}</p>
-                            <p><strong>Longitude:</strong> ${data.longitude || 'N/A'}</p>
-                            <p><strong>Timezone:</strong> ${data.timezone || 'N/A'}</p>
-                            <p><strong>Currency:</strong> ${data.currency || 'N/A'}</p>
-                            <p><strong>ISP:</strong> ${data.org || 'N/A'}</p>
+                            <p><strong>Coordinates:</strong> ${data.latitude || '0'}, ${data.longitude || '0'}</p>
+                            <p><strong>Timezone:</strong> ${data.timezone || 'UTC'}</p>
+                            <p><strong>ISP:</strong> ${data.isp || 'Unknown'}</p>
                             <p><strong>ASN:</strong> ${data.asn || 'N/A'}</p>
+                            ${mapLink}
                         </div>
                     `,
                     width: '600px',
@@ -689,7 +858,7 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                 console.error('Error:', error);
                 Swal.fire({
                     title: 'Error',
-                    text: 'Could not fetch location information. The IP geolocation service may be unavailable.',
+                    text: 'Could not fetch location information.',
                     icon: 'error'
                 });
             });
@@ -718,17 +887,10 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
         var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
             return new bootstrap.Tooltip(tooltipTriggerEl);
         });
-        
-        // Auto-refresh every 60 seconds (optional)
-        // setInterval(function() {
-        //     // You can implement AJAX refresh here instead of full page reload
-        //     console.log('Auto-refresh triggered');
-        // }, 60000);
     });
 </script>
 
 <style>
-    /* Custom styles for this page */
     .swal-wide {
         width: 700px !important;
         max-width: 90vw;
@@ -738,7 +900,6 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
         color: #6f42c1;
     }
     
-    /* Scrollbar styling */
     .table-responsive::-webkit-scrollbar {
         width: 8px;
         height: 8px;
@@ -757,12 +918,10 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
         background: #6c757d;
     }
     
-    /* Ensure details panels are properly styled */
     .bg-dark.rounded {
         background-color: #1a1a1a !important;
     }
     
-    /* Responsive adjustments */
     @media (max-width: 768px) {
         .btn-group-sm .btn {
             padding: 0.25rem 0.5rem;
