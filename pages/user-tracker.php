@@ -362,12 +362,12 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                                     <td>
                                         <div class="btn-group btn-group-sm" role="group">
                                             <button class="btn btn-outline-info" 
-                                                    onclick="fetchWhois('<?php echo htmlspecialchars($realIp); ?>')"
+                                                    onclick="fetchWhois('<?php echo htmlspecialchars($ip); ?>')"
                                                     title="Whois Lookup">
                                                 <i class="fas fa-info-circle"></i>
                                             </button>
                                             <button class="btn btn-outline-success" 
-                                                    onclick="fetchLocation('<?php echo htmlspecialchars($realIp); ?>')"
+                                                    onclick="fetchLocation('<?php echo htmlspecialchars($ip); ?>')"
                                                     title="Location Info">
                                                 <i class="fas fa-map-marker-alt"></i>
                                             </button>

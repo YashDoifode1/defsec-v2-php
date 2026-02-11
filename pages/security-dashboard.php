@@ -1,19 +1,46 @@
 <?php
-include '../includes/header.php';
-// session_start();
+// Start session only if not already started
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+require_once '../includes/db.php';
+
+// Manually define APP_URL - Change this to match your installation
+define('APP_URL', 'http://localhost/defsec/v2');
+
+// CSRF token functions
+function generateCSRFToken($form_name) {
+    if (empty($_SESSION['csrf_tokens'][$form_name])) {
+        $_SESSION['csrf_tokens'][$form_name] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_tokens'][$form_name];
+}
+
+function validateCSRFToken($form_name, $token) {
+    if (empty($_SESSION['csrf_tokens'][$form_name]) || $_SESSION['csrf_tokens'][$form_name] !== $token) {
+        return false;
+    }
+    return true;
+}
+
+// Set default timezone
+date_default_timezone_set('UTC');
+
+// Authentication check
+$isLoggedIn = isset($_SESSION['user_id']) && !empty($_SESSION['user_id']);
+$user_id = $_SESSION['user_id'] ?? null;
+$website_id = $_SESSION['website_id'] ?? null;
+$userRole = $_SESSION['role'] ?? 'user';
 
 // Check if user is logged in
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
+if (!$isLoggedIn) {
+    header("Location: " . APP_URL . "/auth/login.php");
     exit();
 }
 
-$user_id = $_SESSION['user_id'];
-$website_id = isset($_SESSION['website_id']) ? $_SESSION['website_id'] : null;
-
 // Database connection
-$db = new PDO('mysql:host=localhost;dbname=mailfor', 'root', '');
-$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$db = $pdo; // Use the existing connection from db.php
 
 // If website_id not in session, get the user's default website
 if (!$website_id || $website_id == 0) {
@@ -53,7 +80,7 @@ if (isset($_POST['select_website'])) {
     $_SESSION['website_id'] = $_POST['website_id'];
     $website_id = $_SESSION['website_id'];
     // Reload to update data
-    header("Location: ".$_SERVER['PHP_SELF']);
+    header("Location: " . $_SERVER['PHP_SELF']);
     exit();
 }
 
@@ -62,7 +89,7 @@ if (isset($_GET['switch_website'])) {
     $_SESSION['website_id'] = intval($_GET['switch_website']);
     $website_id = $_SESSION['website_id'];
     // Reload to update data
-    header("Location: ".$_SERVER['PHP_SELF']);
+    header("Location: " . $_SERVER['PHP_SELF']);
     exit();
 }
 
@@ -318,61 +345,238 @@ if ($totalAttacks > 0) {
     $attackRatio = ($totalAttacks / $uniqueVisitors) * 100;
     $securityScore = max(0, 100 - min($attackRatio, 50));
 }
+
+// Get current page for navigation highlighting
+$current_page = basename($_SERVER['PHP_SELF']);
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cybersecurity Dashboard</title>
+    <title>DefSec - Security Dashboard</title>
+    
+    <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- jQuery -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+
     <style>
+        :root {
+            --primary-color: #0d6efd;
+            --secondary-color: #6c757d;
+            --success-color: #198754;
+            --danger-color: #dc3545;
+            --warning-color: #ffc107;
+            --info-color: #0dcaf0;
+            --dark-color: #121212;
+            --light-color: #f8f9fa;
+            --sidebar-width: 250px;
+            --header-height: 60px;
+        }
+        
         body {
-            background-color: #f8f9fa;
+            background-color: var(--dark-color);
+            color: #e9ecef;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+            overflow-x: hidden;
         }
-        .dashboard-card {
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-            border: none;
+        
+        /* Sidebar Styles */
+        .sidebar {
+            width: var(--sidebar-width);
+            height: 100vh;
+            position: fixed;
+            left: 0;
+            top: 0;
+            background-color: #1e1e1e;
+            border-right: 1px solid #343a40;
+            z-index: 1000;
+            transition: transform 0.3s ease;
+        }
+        
+        .sidebar-header {
             padding: 20px;
+            border-bottom: 1px solid #343a40;
         }
+        
+        .sidebar-menu {
+            padding: 20px 0;
+        }
+        
+        .nav-link {
+            color: #adb5bd;
+            padding: 12px 20px;
+            border-left: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        
+        .nav-link:hover, .nav-link.active {
+            color: #ffffff;
+            background-color: rgba(255, 255, 255, 0.05);
+            border-left-color: var(--primary-color);
+        }
+        
+        .nav-link i {
+            width: 24px;
+            margin-right: 10px;
+        }
+        
+        /* Main Content */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            padding: 0;
+            min-height: 100vh;
+            transition: margin-left 0.3s ease;
+        }
+        
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+            
+            .sidebar.active {
+                transform: translateX(0);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+        }
+        
+        /* Header */
+        .main-header {
+            background-color: #1e1e1e;
+            border-bottom: 1px solid #343a40;
+            padding: 15px 20px;
+            position: sticky;
+            top: 0;
+            z-index: 999;
+        }
+        
+        /* Dashboard Cards */
+        .dashboard-card {
+            background-color: #1e1e1e;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #343a40;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .dashboard-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        
         .card-icon {
-            font-size: 2.5rem;
+            font-size: 2rem;
             margin-bottom: 15px;
         }
+        
         .stat-number {
             font-size: 2.5rem;
             font-weight: bold;
-            margin-bottom: 5px;
+            line-height: 1;
         }
+        
         .stat-change {
             font-size: 0.9rem;
         }
-        .stat-change.positive {
-            color: #28a745;
+        
+        .positive { color: var(--success-color); }
+        .negative { color: var(--danger-color); }
+        
+        /* Tables */
+        .table-dark {
+            background-color: #1e1e1e;
+            color: #e9ecef;
         }
-        .stat-change.negative {
-            color: #dc3545;
+        
+        .table-dark thead th {
+            border-bottom: 2px solid #343a40;
+            background-color: #252525;
         }
+        
+        .table-dark tbody tr:hover {
+            background-color: rgba(255, 255, 255, 0.05);
+        }
+        
+        /* Buttons */
+        .btn-primary {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        
+        .btn-primary:hover {
+            background-color: #0b5ed7;
+            border-color: #0a58ca;
+        }
+        
+        /* Animations */
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #1e1e1e;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #495057;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6c757d;
+        }
+        
+        /* Content Area */
+        .content-area {
+            padding: 20px;
+        }
+        
+        /* MAP AREA - Keep original light styling */
         #securityMap {
             height: 400px;
             width: 100%;
             border-radius: 8px;
             margin-bottom: 1rem;
             z-index: 1;
+            background-color: #f8f9fa !important; /* Keep map light */
         }
+        
         .map-container {
             position: relative;
+            background-color: #1e1e1e; /* Dark background around map */
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #343a40;
         }
+        
         .map-legend {
             position: absolute;
             bottom: 20px;
@@ -384,20 +588,24 @@ if ($totalAttacks > 0) {
             font-size: 12px;
             color: white;
         }
+        
         .map-legend-item {
             display: flex;
             align-items: center;
             margin-bottom: 5px;
         }
+        
         .map-legend-color {
             width: 15px;
             height: 15px;
             margin-right: 5px;
             border-radius: 50%;
         }
+        
         .attack-marker {
             filter: drop-shadow(0 0 2px rgba(0,0,0,0.5));
         }
+        
         .map-controls {
             position: absolute;
             top: 10px;
@@ -407,10 +615,14 @@ if ($totalAttacks > 0) {
             padding: 8px;
             border-radius: 5px;
         }
+        
         .map-tooltip {
             font-family: monospace;
             font-size: 12px;
+            background-color: white !important;
+            color: black !important;
         }
+        
         .map-stats {
             position: absolute;
             top: 10px;
@@ -423,382 +635,556 @@ if ($totalAttacks > 0) {
             max-width: 200px;
             color: white;
         }
-        .fade-in {
-            animation: fadeIn 0.5s ease-in;
+        
+        /* Modal dark mode */
+        .modal-content.bg-dark {
+            background-color: #1e1e1e !important;
+            border: 1px solid #343a40;
         }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+        
+        .modal-header.border-secondary {
+            border-bottom-color: #495057 !important;
         }
-        .table-dark {
-            background-color: #343a40;
+        
+        .modal-footer.border-secondary {
+            border-top-color: #495057 !important;
+        }
+        
+        .btn-close-white {
+            filter: invert(1) grayscale(100%) brightness(200%);
+        }
+        
+        /* Dropdown dark mode */
+        .dropdown-menu {
+            background-color: #1e1e1e;
+            border: 1px solid #343a40;
+        }
+        
+        .dropdown-item {
+            color: #adb5bd;
+        }
+        
+        .dropdown-item:hover, .dropdown-item:focus {
+            background-color: rgba(255, 255, 255, 0.05);
+            color: #ffffff;
+        }
+        
+        .dropdown-item.active {
+            background-color: var(--primary-color);
             color: white;
         }
-        .table-dark th {
-            background-color: #495057;
-            border-color: #6c757d;
+        
+        /* Badges in dark mode */
+        .badge.bg-dark {
+            background-color: #343a40 !important;
         }
-        .table-dark td {
-            border-color: #6c757d;
+        
+        .badge.bg-secondary {
+            background-color: #6c757d !important;
+        }
+        
+        /* Form controls in dark mode */
+        .form-control.bg-dark {
+            background-color: #2d2d2d !important;
+            border-color: #495057;
+            color: #e9ecef;
+        }
+        
+        .form-check-label.text-white {
+            color: #ffffff !important;
+        }
+        
+        /* Text colors */
+        .text-muted {
+            color: #6c757d !important;
+        }
+        
+        /* Alert in dark mode */
+        .alert {
+            background-color: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.1);
+            color: #e9ecef;
+        }
+        
+        .alert-warning {
+            background-color: rgba(255, 193, 7, 0.1);
+            border-color: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+        }
+        
+        .alert-danger {
+            background-color: rgba(220, 53, 69, 0.1);
+            border-color: rgba(220, 53, 69, 0.2);
+            color: #dc3545;
+        }
+        
+        .alert-info {
+            background-color: rgba(13, 202, 240, 0.1);
+            border-color: rgba(13, 202, 240, 0.2);
+            color: #0dcaf0;
+        }
+        
+        /* Progress bar in dark mode */
+        .progress {
+            background-color: #2d2d2d;
+        }
+        
+        /* Code elements */
+        code {
+            background-color: #2d2d2d;
+            color: #e83e8c;
+            padding: 2px 4px;
+            border-radius: 3px;
         }
     </style>
 </head>
 <body>
-    <div class="container mt-4">
-        <!-- Page Header -->
-        <div class="row mb-4 fade-in">
-            <div class="col-12">
-                <div class="d-flex justify-content-between align-items-center mb-4">
-                    <div>
-                        <h2 class="mb-1"><i class="fas fa-tachometer-alt me-2"></i>Cybersecurity Dashboard</h2>
-                        <p class="text-muted mb-0">
-                            Welcome back, <strong><?php echo htmlspecialchars($userDetails['full_name'] ?? $userDetails['username'] ?? 'User'); ?></strong>! 
-                            Monitoring: <strong><?php echo htmlspecialchars($websiteDetails['site_name'] ?? 'Website'); ?></strong> 
-                            (<code><?php echo htmlspecialchars($websiteDetails['domain'] ?? 'unknown'); ?></code>)
-                        </p>
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h3 class="mb-0">
+                <i class="fas fa-shield-alt text-primary me-2"></i>
+                <span class="fw-bold">DefSec</span>
+            </h3>
+            <p class="text-muted mb-0 small">Security Dashboard</p>
+        </div>
+        
+        <div class="sidebar-menu">
+            <ul class="nav flex-column">
+                <li class="nav-item">
+                    <a class="nav-link active" href="<?php echo APP_URL; ?>/pages/summery.php">
+                        <i class="fas fa-home"></i> Dashboard
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="<?php echo APP_URL; ?>/pages/security-dashboard.php">
+                        <i class="fas fa-shield-alt"></i> Security
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="<?php echo APP_URL; ?>/pages/web-security.php">
+                        <i class="fas fa-bug"></i> Attack Logs
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="<?php echo APP_URL; ?>/pages/vpn-monitoring.php">
+                        <i class="fas fa-shield-virus"></i> VPN Monitor
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="<?php echo APP_URL; ?>/pages/block-list.php">
+                        <i class="fas fa-ban"></i> Block List
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="<?php echo APP_URL; ?>/pages/export.php">
+                        <i class="fas fa-archive"></i> Export logs
+                    </a>
+                </li>
+                  <li class="nav-item">
+                    <a class="nav-link" href="<?php echo APP_URL; ?>/pages/user-tracker.php">
+                        <i class="fas fa-user-secret"></i> User Tracker
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="<?php echo APP_URL; ?>/auth/settings.php">
+                        <i class="fas fa-cog"></i> Settings
+                    </a>
+                </li>
+                <li class="nav-item mt-4">
+                    <a class="nav-link text-danger" href="<?php echo APP_URL; ?>/auth/logout.php">
+                        <i class="fas fa-sign-out-alt"></i> Logout
+                    </a>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content" id="mainContent">
+        <!-- Header -->
+        <header class="main-header d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center">
+                <button class="btn btn-outline-secondary me-3 d-lg-none" id="sidebarToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <h4 class="mb-0">
+                    <i class="fas fa-tachometer-alt me-2"></i>Cybersecurity Dashboard
+                </h4>
+            </div>
+            
+            <div class="d-flex align-items-center">
+                <div class="dropdown">
+                    <button class="btn btn-outline-light dropdown-toggle" type="button" id="userDropdown" data-bs-toggle="dropdown">
+                        <i class="fas fa-user-circle me-2"></i>
+                        <?php echo htmlspecialchars($userDetails['username'] ?? 'User'); ?>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item" href="<?php echo APP_URL; ?>/auth/profile.php"><i class="fas fa-user me-2"></i> Profile</a></li>
+                        <li><a class="dropdown-item" href="<?php echo APP_URL; ?>/auth/settings.php"><i class="fas fa-cog me-2"></i> Settings</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item text-danger" href="<?php echo APP_URL; ?>/auth/logout.php"><i class="fas fa-sign-out-alt me-2"></i> Logout</a></li>
+                    </ul>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <div class="content-area">
+            <!-- Page Header -->
+            <div class="row mb-4 fade-in">
+                <div class="col-12">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <div>
+                            <p class="text-muted mb-0">
+                                Welcome back, <strong><?php echo htmlspecialchars($userDetails['full_name'] ?? $userDetails['username'] ?? 'User'); ?></strong>! 
+                                Monitoring: <strong><?php echo htmlspecialchars($websiteDetails['site_name'] ?? 'Website'); ?></strong> 
+                                (<code><?php echo htmlspecialchars($websiteDetails['domain'] ?? 'unknown'); ?></code>)
+                            </p>
+                        </div>
+                        <div>
+                            <div class="d-flex gap-2 align-items-center">
+                                <span class="badge bg-primary">
+                                    <i class="fas fa-calendar me-1"></i> <?php echo date('F j, Y'); ?>
+                                </span>
+                                <div class="dropdown">
+                                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                        <i class="fas fa-globe me-1"></i> Site: <?php echo htmlspecialchars($websiteDetails['site_name'] ?? 'Select'); ?>
+                                    </button>
+                                    <ul class="dropdown-menu">
+                                        <?php if (!empty($websites)): ?>
+                                            <?php foreach ($websites as $website): ?>
+                                                <li>
+                                                    <a class="dropdown-item <?php echo ($website['id'] == $website_id) ? 'active' : ''; ?>" 
+                                                       href="?switch_website=<?php echo $website['id']; ?>">
+                                                        <?php echo htmlspecialchars($website['site_name']); ?> 
+                                                        <small class="text-muted">(<?php echo htmlspecialchars($website['domain']); ?>)</small>
+                                                    </a>
+                                                </li>
+                                            <?php endforeach; ?>
+                                        <?php else: ?>
+                                            <li><a class="dropdown-item" href="#">No websites found</a></li>
+                                        <?php endif; ?>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div>
-                        <div class="d-flex gap-2 align-items-center">
-                            <span class="badge bg-primary">
-                                <i class="fas fa-calendar me-1"></i> <?php echo date('F j, Y'); ?>
-                            </span>
-                            <div class="dropdown">
-                                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                                    <i class="fas fa-globe me-1"></i> Site: <?php echo htmlspecialchars($websiteDetails['site_name'] ?? 'Select'); ?>
+                </div>
+            </div>
+
+            <!-- Security Map Section -->
+            <div class="row mb-4 fade-in">
+                <div class="col-12">
+                    <div class="dashboard-card">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5 class="mb-0"><i class="fas fa-map-marked-alt me-2"></i>Security Threat Map</h5>
+                            <div>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="resetMapView()">
+                                    <i class="fas fa-sync-alt"></i> Reset View
                                 </button>
-                                <ul class="dropdown-menu">
-                                    <?php if (!empty($websites)): ?>
-                                        <?php foreach ($websites as $website): ?>
-                                            <li>
-                                                <a class="dropdown-item <?php echo ($website['id'] == $website_id) ? 'active' : ''; ?>" 
-                                                   href="?switch_website=<?php echo $website['id']; ?>">
-                                                    <?php echo htmlspecialchars($website['site_name']); ?> 
-                                                    <small class="text-muted">(<?php echo htmlspecialchars($website['domain']); ?>)</small>
-                                                </a>
-                                            </li>
+                                <button class="btn btn-sm btn-outline-info ms-1" onclick="exportMapData()">
+                                    <i class="fas fa-download"></i> Export Data
+                                </button>
+                                <button class="btn btn-sm btn-outline-success ms-1" onclick="refreshMapData()">
+                                    <i class="fas fa-redo"></i> Refresh
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="map-container">
+                            <div id="securityMap"></div>
+                            
+                            <div class="map-stats">
+                                <div class="d-flex justify-content-between">
+                                    <small class="text-muted">Visitors:</small>
+                                    <small><span class="text-success"><?php echo count($visitorFeatures); ?></span></small>
+                                </div>
+                                <div class="d-flex justify-content-between">
+                                    <small class="text-muted">Attacks:</small>
+                                    <small><span class="text-danger"><?php echo count($attackFeatures); ?></span></small>
+                                </div>
+                                <div class="d-flex justify-content-between">
+                                    <small class="text-muted">Countries:</small>
+                                    <small><span class="text-info"><?php echo count($uniqueCountries); ?></span></small>
+                                </div>
+                                <div class="d-flex justify-content-between">
+                                    <small class="text-muted">Updated:</small>
+                                    <small><?php echo date('H:i:s'); ?></small>
+                                </div>
+                            </div>
+                            
+                            <div class="map-controls">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="showVisitors" checked>
+                                    <label class="form-check-label text-white" for="showVisitors">Visitors</label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="showAttacks" checked>
+                                    <label class="form-check-label text-white" for="showAttacks">Attacks</label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="clusterMarkers" checked>
+                                    <label class="form-check-label text-white" for="clusterMarkers">Cluster</label>
+                                </div>
+                            </div>
+                            
+                            <div class="map-legend">
+                                <div class="map-legend-item">
+                                    <div class="map-legend-color" style="background-color: #28a745;"></div>
+                                    <span>Normal Visitors</span>
+                                </div>
+                                <div class="map-legend-item">
+                                    <div class="map-legend-color" style="background-color: #6c757d;"></div>
+                                    <span>VPN/Proxy</span>
+                                </div>
+                                <div class="map-legend-item">
+                                    <div class="map-legend-color" style="background-color: #dc3545;"></div>
+                                    <span>Critical Attacks</span>
+                                </div>
+                                <div class="map-legend-item">
+                                    <div class="map-legend-color" style="background-color: #fd7e14;"></div>
+                                    <span>High Severity</span>
+                                </div>
+                                <div class="map-legend-item">
+                                    <div class="map-legend-color" style="background-color: #ffc107;"></div>
+                                    <span>Medium Severity</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Statistics Cards -->
+            <div class="row mb-4 fade-in">
+                <div class="col-xl-3 col-md-6">
+                    <div class="dashboard-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <div class="card-icon text-danger">
+                                    <i class="fas fa-skull-crossbones"></i>
+                                </div>
+                                <div class="text-muted mb-1">Total Attacks (7 days)</div>
+                                <div class="stat-number text-danger"><?php echo $attackData['total_attacks'] ?? 0; ?></div>
+                                <div class="stat-change">
+                                    <small>
+                                        <span class="text-danger"><?php echo $attackData['critical'] ?? 0; ?> Critical</span> | 
+                                        <span class="text-warning"><?php echo $attackData['high'] ?? 0; ?> High</span>
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-3 col-md-6">
+                    <div class="dashboard-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <div class="card-icon text-warning">
+                                    <i class="fas fa-ban"></i>
+                                </div>
+                                <div class="text-muted mb-1">Blocked IPs</div>
+                                <div class="stat-number text-warning"><?php echo $blockedData['count'] ?? 0; ?></div>
+                                <div class="stat-change positive">
+                                    <i class="fas fa-shield-alt"></i> Active protection
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-3 col-md-6">
+                    <div class="dashboard-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <div class="card-icon text-success">
+                                    <i class="fas fa-users"></i>
+                                </div>
+                                <div class="text-muted mb-1">Visitors (7 days)</div>
+                                <div class="stat-number text-success"><?php echo $visitorData['unique_visitors'] ?? 0; ?></div>
+                                <div class="stat-change">
+                                    <small>
+                                        <?php echo $visitorData['vpn_users'] ?? 0; ?> VPN | 
+                                        <?php echo $visitorData['proxy_users'] ?? 0; ?> Proxy
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-3 col-md-6">
+                    <div class="dashboard-card">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <div class="card-icon text-info">
+                                    <i class="fas fa-user-shield"></i>
+                                </div>
+                                <div class="text-muted mb-1">Security Score</div>
+                                <div class="stat-number text-info"><?php echo round($securityScore); ?>%</div>
+                                <div class="stat-change <?php echo $securityScore >= 80 ? 'positive' : ($securityScore >= 60 ? '' : 'negative'); ?>">
+                                    <i class="fas fa-<?php echo $securityScore >= 80 ? 'shield-alt' : 'exclamation-triangle'; ?>"></i>
+                                    <?php echo $securityScore >= 80 ? 'Excellent' : ($securityScore >= 60 ? 'Good' : 'Needs attention'); ?>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Attacks & Top Countries -->
+            <div class="row fade-in">
+                <div class="col-xl-8">
+                    <div class="dashboard-card">
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <h5 class="mb-0"><i class="fas fa-history me-2"></i>Recent Attacks</h5>
+                            <a href="web-security.php?website_id=<?php echo $website_id; ?>" class="btn btn-sm btn-outline-primary">
+                                <i class="fas fa-external-link-alt me-1"></i> View All
+                            </a>
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table class="table table-dark table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Attack Type</th>
+                                        <th>Severity</th>
+                                        <th>IP Address</th>
+                                        <th>Country</th>
+                                        <th>Time</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (!empty($recentData)): ?>
+                                        <?php foreach ($recentData as $attack): ?>
+                                        <?php
+                                        // Get country for this IP
+                                        $ipCountry = 'Unknown';
+                                        try {
+                                            $countryQuery = $db->prepare("SELECT country FROM logs WHERE ip = ? AND user_id = ? AND website_id = ? ORDER BY timestamp DESC LIMIT 1");
+                                            $countryQuery->execute([$attack['ip_address'], $user_id, $website_id]);
+                                            $countryResult = $countryQuery->fetch();
+                                            $ipCountry = $countryResult['country'] ?? 'Unknown';
+                                        } catch (Exception $e) {
+                                            $ipCountry = 'Unknown';
+                                        }
+                                        ?>
+                                        <tr>
+                                            <td>
+                                                <span class="badge bg-secondary">
+                                                    <?php echo htmlspecialchars($attack['attack_type'] ?? 'Unknown'); ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <?php
+                                                $severityColor = 'secondary';
+                                                $severity = strtolower($attack['severity'] ?? '');
+                                                switch($severity) {
+                                                    case 'critical': $severityColor = 'danger'; break;
+                                                    case 'high': $severityColor = 'warning'; break;
+                                                    case 'medium': $severityColor = 'info'; break;
+                                                    case 'info': $severityColor = 'secondary'; break;
+                                                }
+                                                ?>
+                                                <span class="badge bg-<?php echo $severityColor; ?>">
+                                                    <?php echo htmlspecialchars($attack['severity'] ?? 'Info'); ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <code><?php echo htmlspecialchars($attack['ip_address'] ?? 'Unknown'); ?></code>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-dark">
+                                                    <?php echo htmlspecialchars($ipCountry); ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <?php 
+                                                $time = $attack['timestamp'] ?? '';
+                                                if ($time) {
+                                                    echo date('H:i', strtotime($time));
+                                                } else {
+                                                    echo 'N/A';
+                                                }
+                                                ?>
+                                            </td>
+                                            <td>
+                                                <div class="btn-group btn-group-sm">
+                                                    <button type="button" class="btn btn-outline-info" 
+                                                            onclick="focusOnIP('<?php echo htmlspecialchars($attack['ip_address'] ?? ''); ?>')"
+                                                            title="Locate on Map">
+                                                        <i class="fas fa-map-marker-alt"></i>
+                                                    </button>
+                                                    <a href="block-list.php?ip=<?php echo urlencode($attack['ip_address'] ?? ''); ?>&website_id=<?php echo $website_id; ?>" 
+                                                       class="btn btn-outline-danger" title="Block IP">
+                                                        <i class="fas fa-ban"></i>
+                                                    </a>
+                                                </div>
+                                            </td>
+                                        </tr>
                                         <?php endforeach; ?>
                                     <?php else: ?>
-                                        <li><a class="dropdown-item" href="#">No websites found</a></li>
+                                        <tr>
+                                            <td colspan="6" class="text-center py-4">
+                                                <div class="text-muted">
+                                                    <i class="fas fa-check-circle fa-2x mb-3 text-success"></i>
+                                                    <div>No recent attacks detected</div>
+                                                    <small class="mt-2 d-block">Your security is looking good!</small>
+                                                </div>
+                                            </td>
+                                        </tr>
                                     <?php endif; ?>
-                                </ul>
-                            </div>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
-            </div>
-        </div>
 
-        <!-- Security Map Section -->
-        <div class="row mb-4 fade-in">
-            <div class="col-12">
-                <div class="dashboard-card">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="mb-0"><i class="fas fa-map-marked-alt me-2"></i>Security Threat Map</h5>
-                        <div>
-                            <button class="btn btn-sm btn-outline-secondary" onclick="resetMapView()">
-                                <i class="fas fa-sync-alt"></i> Reset View
-                            </button>
-                            <button class="btn btn-sm btn-outline-info ms-1" onclick="exportMapData()">
-                                <i class="fas fa-download"></i> Export Data
-                            </button>
-                            <button class="btn btn-sm btn-outline-success ms-1" onclick="refreshMapData()">
-                                <i class="fas fa-redo"></i> Refresh
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <div class="map-container">
-                        <div id="securityMap"></div>
+                <div class="col-xl-4">
+                    <div class="dashboard-card">
+                        <h5 class="mb-4"><i class="fas fa-flag me-2"></i>Top Attacking Countries</h5>
                         
-                        <div class="map-stats">
-                            <div class="d-flex justify-content-between">
-                                <small class="text-muted">Visitors:</small>
-                                <small><span class="text-success"><?php echo count($visitorFeatures); ?></span></small>
-                            </div>
-                            <div class="d-flex justify-content-between">
-                                <small class="text-muted">Attacks:</small>
-                                <small><span class="text-danger"><?php echo count($attackFeatures); ?></span></small>
-                            </div>
-                            <div class="d-flex justify-content-between">
-                                <small class="text-muted">Countries:</small>
-                                <small><span class="text-info"><?php echo count($uniqueCountries); ?></span></small>
-                            </div>
-                            <div class="d-flex justify-content-between">
-                                <small class="text-muted">Updated:</small>
-                                <small><?php echo date('H:i:s'); ?></small>
-                            </div>
-                        </div>
-                        
-                        <div class="map-controls">
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="showVisitors" checked>
-                                <label class="form-check-label text-white" for="showVisitors">Visitors</label>
-                            </div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="showAttacks" checked>
-                                <label class="form-check-label text-white" for="showAttacks">Attacks</label>
-                            </div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="clusterMarkers" checked>
-                                <label class="form-check-label text-white" for="clusterMarkers">Cluster</label>
-                            </div>
-                        </div>
-                        
-                        <div class="map-legend">
-                            <div class="map-legend-item">
-                                <div class="map-legend-color" style="background-color: #28a745;"></div>
-                                <span>Normal Visitors</span>
-                            </div>
-                            <div class="map-legend-item">
-                                <div class="map-legend-color" style="background-color: #6c757d;"></div>
-                                <span>VPN/Proxy</span>
-                            </div>
-                            <div class="map-legend-item">
-                                <div class="map-legend-color" style="background-color: #dc3545;"></div>
-                                <span>Critical Attacks</span>
-                            </div>
-                            <div class="map-legend-item">
-                                <div class="map-legend-color" style="background-color: #fd7e14;"></div>
-                                <span>High Severity</span>
-                            </div>
-                            <div class="map-legend-item">
-                                <div class="map-legend-color" style="background-color: #ffc107;"></div>
-                                <span>Medium Severity</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Statistics Cards -->
-        <div class="row mb-4 fade-in">
-            <div class="col-xl-3 col-md-6">
-                <div class="dashboard-card">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div>
-                            <div class="card-icon text-danger">
-                                <i class="fas fa-skull-crossbones"></i>
-                            </div>
-                            <div class="text-muted mb-1">Total Attacks (7 days)</div>
-                            <div class="stat-number text-danger"><?php echo $attackData['total_attacks'] ?? 0; ?></div>
-                            <div class="stat-change">
-                                <small>
-                                    <span class="text-danger"><?php echo $attackData['critical'] ?? 0; ?> Critical</span> | 
-                                    <span class="text-warning"><?php echo $attackData['high'] ?? 0; ?> High</span>
-                                </small>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-xl-3 col-md-6">
-                <div class="dashboard-card">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div>
-                            <div class="card-icon text-warning">
-                                <i class="fas fa-ban"></i>
-                            </div>
-                            <div class="text-muted mb-1">Blocked IPs</div>
-                            <div class="stat-number text-warning"><?php echo $blockedData['count'] ?? 0; ?></div>
-                            <div class="stat-change positive">
-                                <i class="fas fa-shield-alt"></i> Active protection
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-xl-3 col-md-6">
-                <div class="dashboard-card">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div>
-                            <div class="card-icon text-success">
-                                <i class="fas fa-users"></i>
-                            </div>
-                            <div class="text-muted mb-1">Visitors (7 days)</div>
-                            <div class="stat-number text-success"><?php echo $visitorData['unique_visitors'] ?? 0; ?></div>
-                            <div class="stat-change">
-                                <small>
-                                    <?php echo $visitorData['vpn_users'] ?? 0; ?> VPN | 
-                                    <?php echo $visitorData['proxy_users'] ?? 0; ?> Proxy
-                                </small>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-xl-3 col-md-6">
-                <div class="dashboard-card">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div>
-                            <div class="card-icon text-info">
-                                <i class="fas fa-user-shield"></i>
-                            </div>
-                            <div class="text-muted mb-1">Security Score</div>
-                            <div class="stat-number text-info"><?php echo round($securityScore); ?>%</div>
-                            <div class="stat-change <?php echo $securityScore >= 80 ? 'positive' : ($securityScore >= 60 ? '' : 'negative'); ?>">
-                                <i class="fas fa-<?php echo $securityScore >= 80 ? 'shield-alt' : 'exclamation-triangle'; ?>"></i>
-                                <?php echo $securityScore >= 80 ? 'Excellent' : ($securityScore >= 60 ? 'Good' : 'Needs attention'); ?>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Recent Attacks & Top Countries -->
-        <div class="row fade-in">
-            <div class="col-xl-8">
-                <div class="dashboard-card">
-                    <div class="d-flex justify-content-between align-items-center mb-4">
-                        <h5 class="mb-0"><i class="fas fa-history me-2"></i>Recent Attacks</h5>
-                        <a href="web-security.php?website_id=<?php echo $website_id; ?>" class="btn btn-sm btn-outline-primary">
-                            <i class="fas fa-external-link-alt me-1"></i> View All
-                        </a>
-                    </div>
-                    
-                    <div class="table-responsive">
-                        <table class="table table-dark table-hover">
-                            <thead>
-                                <tr>
-                                    <th>Attack Type</th>
-                                    <th>Severity</th>
-                                    <th>IP Address</th>
-                                    <th>Country</th>
-                                    <th>Time</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if (!empty($recentData)): ?>
-                                    <?php foreach ($recentData as $attack): ?>
-                                    <?php
-                                    // Get country for this IP
-                                    $ipCountry = 'Unknown';
-                                    try {
-                                        $countryQuery = $db->prepare("SELECT country FROM logs WHERE ip = ? AND user_id = ? AND website_id = ? ORDER BY timestamp DESC LIMIT 1");
-                                        $countryQuery->execute([$attack['ip_address'], $user_id, $website_id]);
-                                        $countryResult = $countryQuery->fetch();
-                                        $ipCountry = $countryResult['country'] ?? 'Unknown';
-                                    } catch (Exception $e) {
-                                        $ipCountry = 'Unknown';
-                                    }
-                                    ?>
-                                    <tr>
-                                        <td>
-                                            <span class="badge bg-secondary">
-                                                <?php echo htmlspecialchars($attack['attack_type'] ?? 'Unknown'); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <?php
-                                            $severityColor = 'secondary';
-                                            $severity = strtolower($attack['severity'] ?? '');
-                                            switch($severity) {
-                                                case 'critical': $severityColor = 'danger'; break;
-                                                case 'high': $severityColor = 'warning'; break;
-                                                case 'medium': $severityColor = 'info'; break;
-                                                case 'info': $severityColor = 'secondary'; break;
-                                            }
-                                            ?>
-                                            <span class="badge bg-<?php echo $severityColor; ?>">
-                                                <?php echo htmlspecialchars($attack['severity'] ?? 'Info'); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <code><?php echo htmlspecialchars($attack['ip_address'] ?? 'Unknown'); ?></code>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-dark">
-                                                <?php echo htmlspecialchars($ipCountry); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <?php 
-                                            $time = $attack['timestamp'] ?? '';
-                                            if ($time) {
-                                                echo date('H:i', strtotime($time));
-                                            } else {
-                                                echo 'N/A';
-                                            }
-                                            ?>
-                                        </td>
-                                        <td>
-                                            <div class="btn-group btn-group-sm">
-                                                <button type="button" class="btn btn-outline-info" 
-                                                        onclick="focusOnIP('<?php echo htmlspecialchars($attack['ip_address'] ?? ''); ?>')"
-                                                        title="Locate on Map">
-                                                    <i class="fas fa-map-marker-alt"></i>
-                                                </button>
-                                                <a href="block-list.php?ip=<?php echo urlencode($attack['ip_address'] ?? ''); ?>&website_id=<?php echo $website_id; ?>" 
-                                                   class="btn btn-outline-danger" title="Block IP">
-                                                    <i class="fas fa-ban"></i>
-                                                </a>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                    <?php endforeach; ?>
-                                <?php else: ?>
-                                    <tr>
-                                        <td colspan="6" class="text-center py-4">
-                                            <div class="text-muted">
-                                                <i class="fas fa-check-circle fa-2x mb-3 text-success"></i>
-                                                <div>No recent attacks detected</div>
-                                                <small class="mt-2 d-block">Your security is looking good!</small>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-xl-4">
-                <div class="dashboard-card">
-                    <h5 class="mb-4"><i class="fas fa-flag me-2"></i>Top Attacking Countries</h5>
-                    
-                    <?php if (!empty($countryData)): ?>
-                        <div class="mb-4">
-                            <?php foreach ($countryData as $country): ?>
-                                <div class="d-flex justify-content-between align-items-center mb-2">
-                                    <div>
-                                        <span class="badge bg-dark"><?php echo htmlspecialchars($country['country']); ?></span>
-                                        <small class="text-muted ms-2"><?php echo $country['attack_types']; ?></small>
+                        <?php if (!empty($countryData)): ?>
+                            <div class="mb-4">
+                                <?php foreach ($countryData as $country): ?>
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <div>
+                                            <span class="badge bg-dark"><?php echo htmlspecialchars($country['country']); ?></span>
+                                            <small class="text-muted ms-2"><?php echo $country['attack_types']; ?></small>
+                                        </div>
+                                        <div>
+                                            <span class="badge bg-danger"><?php echo $country['attack_count']; ?> attacks</span>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <span class="badge bg-danger"><?php echo $country['attack_count']; ?> attacks</span>
+                                    <div class="progress mb-3" style="height: 6px;">
+                                        <div class="progress-bar bg-danger" 
+                                             style="width: <?php echo min(100, ($country['attack_count'] / max(1, $attackData['total_attacks'])) * 100); ?>%"></div>
                                     </div>
-                                </div>
-                                <div class="progress mb-3" style="height: 6px;">
-                                    <div class="progress-bar bg-danger" 
-                                         style="width: <?php echo min(100, ($country['attack_count'] / max(1, $attackData['total_attacks'])) * 100); ?>%"></div>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                    <?php else: ?>
-                        <div class="text-center text-muted py-3">
-                            <i class="fas fa-globe fa-lg mb-2"></i>
-                            <div>No country data available</div>
-                        </div>
-                    <?php endif; ?>
-                    
-                    <div class="mt-4 pt-3 border-top">
-                        <h6 class="mb-3"><i class="fas fa-bolt me-2"></i>Quick Actions</h6>
-                        <div class="d-grid gap-2">
-                            <a href="geolocation.php?website_id=<?php echo $website_id; ?>" class="btn btn-outline-primary text-start">
-                                <i class="fas fa-map me-2"></i> Detailed Geolocation
-                            </a>
-                            <a href="web-security.php?website_id=<?php echo $website_id; ?>" class="btn btn-outline-primary text-start">
-                                <i class="fas fa-bug me-2"></i> Attack Analytics
-                            </a>
-                            <a href="block-list.php?website_id=<?php echo $website_id; ?>" class="btn btn-outline-primary text-start">
-                                <i class="fas fa-ban me-2"></i> IP Management
-                            </a>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php else: ?>
+                            <div class="text-center text-muted py-3">
+                                <i class="fas fa-globe fa-lg mb-2"></i>
+                                <div>No country data available</div>
+                            </div>
+                        <?php endif; ?>
+                        
+                        <div class="mt-4 pt-3 border-top">
+                            <h6 class="mb-3"><i class="fas fa-bolt me-2"></i>Quick Actions</h6>
+                            <div class="d-grid gap-2">
+                                <a href="geolocation.php?website_id=<?php echo $website_id; ?>" class="btn btn-outline-primary text-start">
+                                    <i class="fas fa-map me-2"></i> Detailed Geolocation
+                                </a>
+                                <a href="web-security.php?website_id=<?php echo $website_id; ?>" class="btn btn-outline-primary text-start">
+                                    <i class="fas fa-bug me-2"></i> Attack Analytics
+                                </a>
+                                <a href="block-list.php?website_id=<?php echo $website_id; ?>" class="btn btn-outline-primary text-start">
+                                    <i class="fas fa-ban me-2"></i> IP Management
+                                </a>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1157,6 +1543,11 @@ if ($totalAttacks > 0) {
                 map.removeLayer(markerCluster);
                 map.addLayer(markers);
             }
+        });
+        
+        // Sidebar toggle for mobile
+        $('#sidebarToggle').click(function() {
+            $('#sidebar').toggleClass('active');
         });
         
         // Cleanup modal map on close
