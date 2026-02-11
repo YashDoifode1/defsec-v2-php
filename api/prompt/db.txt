@@ -137,22 +137,7 @@ CREATE TABLE `settings` (
 )
 Purpose: System configuration (VPN blocking, strict mode).
 
-8. user2 (Seems like a backup/legacy table)
-sql
-CREATE TABLE `user2` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `username` varchar(50) NOT NULL,
-  `email` varchar(100) NOT NULL,
-  `password_hash` varchar(255) NOT NULL,
-  `full_name` varchar(100) DEFAULT NULL,
-  `role` enum('admin','analyst','viewer') DEFAULT 'viewer',
-  `last_login` datetime DEFAULT NULL,
-  `login_attempts` int(11) DEFAULT 0,
-  `last_attempt` datetime DEFAULT NULL,
-  `is_locked` tinyint(1) DEFAULT 0,
-  `created_at` datetime DEFAULT current_timestamp(),
-  `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp()
-)
+
 9. users (Primary user table)
 sql
 CREATE TABLE `users` (

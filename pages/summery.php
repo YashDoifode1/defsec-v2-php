@@ -143,6 +143,18 @@ try {
     $attackTypeData = [];
 }
 ?>
+<style>
+.text-muted {
+    --bs-text-opacity: 1;
+    /* color: var(--bs-secondary-color) !important; */
+}
+
+.mb-1 {
+    margin-bottom: .25rem !important;
+    color: white;
+}
+
+</style>
 <div class="row g-4 fade-in">
     <!-- Page Header -->
     <div class="col-12">

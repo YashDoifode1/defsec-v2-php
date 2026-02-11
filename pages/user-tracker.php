@@ -1,6 +1,7 @@
 <?php
 // user-tracker.php
 require_once '../includes/header.php';
+require_once '../includes/auth.php';
 
 // Check if user is logged in
 if (!$auth->isLoggedIn()) {
@@ -8,12 +9,22 @@ if (!$auth->isLoggedIn()) {
     exit();
 }
 
-// Set default values for userId and websiteId
-$userId = $userId ?? 1;
-$websiteId = $websiteId ?? 1;
+// Get the logged-in user ID from session
+$userId = $_SESSION['user_id'] ?? null;
+if (!$userId) {
+    header("Location: login.php");
+    exit();
+}
+
+// Get website ID from session or default (assuming user has websites)
+// You might want to get this from a user selection or configuration
+$websiteId = $_SESSION['website_id'] ?? 1;
+
+// Get database connection from includes
+require_once '../includes/db.php'; // Assuming you have a db.php with PDO connection
 
 // Handle Search Query
-$search = $_GET['search'] ?? '';
+$search = isset($_GET['search']) ? trim($_GET['search']) : '';
 
 // Base SQL with user & website filter
 $sql = "SELECT * FROM logs WHERE user_id = :user_id AND website_id = :website_id";
@@ -25,7 +36,7 @@ $params = [
 ];
 
 if (!empty($search)) {
-    $sql .= " AND (ip LIKE :search OR real_ip LIKE :search2 OR ASN LIKE :search3 OR ISP LIKE :search4 OR user_agent LIKE :search5 OR digital_dna LIKE :search6)";
+    $sql .= " AND (ip LIKE :search OR real_ip LIKE :search2 OR ASN LIKE :search3 OR ISP LIKE :search4 OR user_agent LIKE :search5 OR digital_dna LIKE :search6 OR country LIKE :search7 OR city LIKE :search8)";
     $search_param = "%$search%";
     $params[':search'] = $search_param;
     $params[':search2'] = $search_param;
@@ -33,6 +44,8 @@ if (!empty($search)) {
     $params[':search4'] = $search_param;
     $params[':search5'] = $search_param;
     $params[':search6'] = $search_param;
+    $params[':search7'] = $search_param;
+    $params[':search8'] = $search_param;
 }
 
 $sql .= " ORDER BY id DESC";
@@ -41,10 +54,12 @@ $sql .= " ORDER BY id DESC";
 try {
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    $logs = $stmt->fetchAll();
+    $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $logs = [];
     $error = "Database error: " . $e->getMessage();
+    // Log the error but don't show it to users
+    error_log($error);
 }
 
 // Get summary statistics
@@ -58,8 +73,8 @@ $stats = [
 
 foreach ($logs as $row) {
     $stats['total_visitors']++;
-    if ($row['is_vpn']) $stats['vpn_users']++;
-    if ($row['is_tor']) $stats['tor_users']++;
+    if (isset($row['is_vpn']) && $row['is_vpn']) $stats['vpn_users']++;
+    if (isset($row['is_tor']) && $row['is_tor']) $stats['tor_users']++;
     if (!empty($row['country'])) $stats['unique_countries'][$row['country']] = true;
     if (!empty($row['ip'])) $stats['unique_ips'][$row['ip']] = true;
 }
@@ -218,6 +233,13 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                 </div>
             </div>
             
+            <?php if (isset($error)): ?>
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    There was an error loading the data. Please try again.
+                </div>
+            <?php endif; ?>
+            
             <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
                 <table class="table table-dark table-hover">
                     <thead style="position: sticky; top: 0; background: #2d2d2d; z-index: 1;">
@@ -239,15 +261,19 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                             <?php foreach ($logs as $row): ?>
                                 <?php
                                 $privacyBadges = [];
-                                if ($row['is_vpn']) $privacyBadges[] = '<span class="badge bg-danger">VPN</span>';
-                                if ($row['is_tor']) $privacyBadges[] = '<span class="badge bg-warning">TOR</span>';
-                                if ($row['webrtc_ip'] && $row['webrtc_ip'] != $row['ip']) $privacyBadges[] = '<span class="badge bg-info">WebRTC</span>';
-                                if ($row['dns_leak_ip']) $privacyBadges[] = '<span class="badge bg-info">DNS Leak</span>';
+                                if (isset($row['is_vpn']) && $row['is_vpn']) $privacyBadges[] = '<span class="badge bg-danger">VPN</span>';
+                                if (isset($row['is_tor']) && $row['is_tor']) $privacyBadges[] = '<span class="badge bg-warning">TOR</span>';
+                                if (!empty($row['webrtc_ip']) && $row['webrtc_ip'] != 'Unknown' && isset($row['ip']) && $row['webrtc_ip'] != $row['ip']) {
+                                    $privacyBadges[] = '<span class="badge bg-info">WebRTC</span>';
+                                }
+                                if (!empty($row['dns_leak_ip']) && $row['dns_leak_ip'] != 'Unknown') {
+                                    $privacyBadges[] = '<span class="badge bg-info">DNS Leak</span>';
+                                }
                                 
                                 $privacyDisplay = !empty($privacyBadges) ? implode(' ', $privacyBadges) : '<span class="badge bg-success">Clean</span>';
                                 
                                 // Truncate long text
-                                $userAgent = htmlspecialchars($row['user_agent'] ?? '');
+                                $userAgent = isset($row['user_agent']) ? htmlspecialchars($row['user_agent']) : '';
                                 if (strlen($userAgent) > 50) {
                                     $userAgent = substr($userAgent, 0, 50) . '...';
                                 }
@@ -256,62 +282,76 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                                 if (strlen($fingerprint) > 15) {
                                     $fingerprint = substr($fingerprint, 0, 15) . '...';
                                 }
+                                
+                                // Ensure all variables are set
+                                $rowId = $row['id'] ?? '';
+                                $ip = $row['ip'] ?? '';
+                                $realIp = $row['real_ip'] ?? '';
+                                $country = $row['country'] ?? 'Unknown';
+                                $city = $row['city'] ?? '';
+                                $isp = $row['ISP'] ?? 'Unknown';
+                                $screenResolution = $row['screen_resolution'] ?? 'N/A';
+                                $asn = $row['ASN'] ?? 'N/A';
+                                $webrtcIp = $row['webrtc_ip'] ?? 'N/A';
+                                $dnsLeakIp = $row['dns_leak_ip'] ?? 'N/A';
+                                $port = $row['port'] ?? 'N/A';
+                                $reverseDns = $row['reverse_dns'] ?? '';
                                 ?>
                                 <tr>
                                     <td>
-                                        <span class="badge bg-dark">#<?php echo htmlspecialchars($row['id'] ?? ''); ?></span>
+                                        <span class="badge bg-dark">#<?php echo htmlspecialchars($rowId); ?></span>
                                     </td>
                                     <td>
                                         <div>
-                                            <code><?php echo htmlspecialchars($row['ip'] ?? ''); ?></code>
-                                            <?php if (!empty($row['reverse_dns'])): ?>
+                                            <code><?php echo htmlspecialchars($ip); ?></code>
+                                            <?php if (!empty($reverseDns) && $reverseDns != 'Unknown'): ?>
                                                 <br>
-                                                <small class="text-muted"><?php echo htmlspecialchars($row['reverse_dns']); ?></small>
+                                                <small class="text-muted"><?php echo htmlspecialchars($reverseDns); ?></small>
                                             <?php endif; ?>
                                         </div>
                                         <button class="btn btn-sm btn-link p-0 text-info" 
-                                                onclick="toggleDetails('details-<?php echo $row['id']; ?>')">
+                                                onclick="toggleDetails('details-<?php echo $rowId; ?>')">
                                             <small><i class="fas fa-chevron-down me-1"></i> Details</small>
                                         </button>
-                                        <div id="details-<?php echo $row['id']; ?>" class="mt-2 p-2 bg-dark rounded" style="display: none;">
+                                        <div id="details-<?php echo $rowId; ?>" class="mt-2 p-2 bg-dark rounded" style="display: none;">
                                             <div class="row g-2">
                                                 <div class="col-md-6">
-                                                    <small><strong>ASN:</strong> <?php echo htmlspecialchars($row['ASN'] ?? 'N/A'); ?></small>
+                                                    <small><strong>ASN:</strong> <?php echo htmlspecialchars($asn); ?></small>
                                                 </div>
                                                 <div class="col-md-6">
-                                                    <small><strong>WebRTC IP:</strong> <?php echo htmlspecialchars($row['webrtc_ip'] ?? 'N/A'); ?></small>
+                                                    <small><strong>WebRTC IP:</strong> <?php echo htmlspecialchars($webrtcIp); ?></small>
                                                 </div>
                                                 <div class="col-md-6">
-                                                    <small><strong>DNS Leak IP:</strong> <?php echo htmlspecialchars($row['dns_leak_ip'] ?? 'N/A'); ?></small>
+                                                    <small><strong>DNS Leak IP:</strong> <?php echo htmlspecialchars($dnsLeakIp); ?></small>
                                                 </div>
                                                 <div class="col-md-6">
-                                                    <small><strong>Port:</strong> <?php echo htmlspecialchars($row['port'] ?? 'N/A'); ?></small>
+                                                    <small><strong>Port:</strong> <?php echo htmlspecialchars($port); ?></small>
                                                 </div>
                                             </div>
                                         </div>
                                     </td>
                                     <td>
-                                        <code><?php echo htmlspecialchars($row['real_ip'] ?? ''); ?></code>
+                                        <code><?php echo htmlspecialchars($realIp); ?></code>
                                     </td>
                                     <td>
                                         <div class="d-flex align-items-center">
                                             <i class="fas fa-globe me-2 text-muted"></i>
                                             <div>
-                                                <div><?php echo htmlspecialchars($row['country'] ?? 'Unknown'); ?></div>
-                                                <?php if (!empty($row['city'])): ?>
-                                                    <small class="text-muted"><?php echo htmlspecialchars($row['city']); ?></small>
+                                                <div><?php echo htmlspecialchars($country); ?></div>
+                                                <?php if (!empty($city) && $city != 'Unknown'): ?>
+                                                    <small class="text-muted"><?php echo htmlspecialchars($city); ?></small>
                                                 <?php endif; ?>
                                             </div>
                                         </div>
                                     </td>
                                     <td>
-                                        <small><?php echo htmlspecialchars($row['ISP'] ?? 'Unknown'); ?></small>
+                                        <small><?php echo htmlspecialchars($isp); ?></small>
                                     </td>
                                     <td>
                                         <?php echo $privacyDisplay; ?>
                                     </td>
                                     <td>
-                                        <small><?php echo htmlspecialchars($row['screen_resolution'] ?? 'N/A'); ?></small>
+                                        <small><?php echo htmlspecialchars($screenResolution); ?></small>
                                     </td>
                                     <td>
                                         <small><?php echo $userAgent; ?></small>
@@ -322,16 +362,16 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                                     <td>
                                         <div class="btn-group btn-group-sm" role="group">
                                             <button class="btn btn-outline-info" 
-                                                    onclick="fetchWhois('<?php echo htmlspecialchars($row['real_ip'] ?? ''); ?>')"
+                                                    onclick="fetchWhois('<?php echo htmlspecialchars($realIp); ?>')"
                                                     title="Whois Lookup">
                                                 <i class="fas fa-info-circle"></i>
                                             </button>
                                             <button class="btn btn-outline-success" 
-                                                    onclick="fetchLocation('<?php echo htmlspecialchars($row['real_ip'] ?? ''); ?>')"
+                                                    onclick="fetchLocation('<?php echo htmlspecialchars($realIp); ?>')"
                                                     title="Location Info">
                                                 <i class="fas fa-map-marker-alt"></i>
                                             </button>
-                                            <a href="block-list.php?ip=<?php echo urlencode($row['ip'] ?? ''); ?>" 
+                                            <a href="block-list.php?ip=<?php echo urlencode($ip); ?>" 
                                                class="btn btn-outline-danger"
                                                title="Block IP">
                                                 <i class="fas fa-ban"></i>
@@ -528,6 +568,8 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
 
 <!-- SweetAlert2 -->
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
     // Toggle details visibility
@@ -542,7 +584,7 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
     
     // Fetch Whois information
     function fetchWhois(ip) {
-        if (!ip) {
+        if (!ip || ip === '') {
             Swal.fire('Error', 'No IP address provided', 'error');
             return;
         }
@@ -556,6 +598,7 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
             }
         });
         
+        // You need to create a whois.php API endpoint
         fetch(`api/whois.php?ip=${encodeURIComponent(ip)}`)
             .then(response => {
                 if (!response.ok) {
@@ -573,7 +616,7 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                 
                 Swal.fire({
                     title: `Whois Information for ${ip}`,
-                    html: `<div style="text-align: left; max-height: 400px; overflow-y: auto;">${whoisInfo}</div>`,
+                    html: `<div style="text-align: left; max-height: 400px; overflow-y: auto;">${whoisInfo || 'No Whois information available'}</div>`,
                     width: '700px',
                     confirmButtonText: 'Close',
                     customClass: {
@@ -585,7 +628,7 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                 console.error('Error:', error);
                 Swal.fire({
                     title: 'Error',
-                    text: 'Could not fetch Whois information. Please try again.',
+                    text: 'Could not fetch Whois information. Please create api/whois.php endpoint.',
                     icon: 'error'
                 });
             });
@@ -593,7 +636,7 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
     
     // Fetch location information
     function fetchLocation(ip) {
-        if (!ip) {
+        if (!ip || ip === '') {
             Swal.fire('Error', 'No IP address provided', 'error');
             return;
         }
@@ -624,17 +667,17 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                     title: `Location Information for ${ip}`,
                     html: `
                         <div style="text-align: left;">
-                            <p><strong>IP Address:</strong> ${data.ip}</p>
-                            <p><strong>Country:</strong> ${data.country_name} (${data.country_code})</p>
-                            <p><strong>Region:</strong> ${data.region} - ${data.region_code}</p>
-                            <p><strong>City:</strong> ${data.city}</p>
-                            <p><strong>Postal Code:</strong> ${data.postal}</p>
-                            <p><strong>Latitude:</strong> ${data.latitude}</p>
-                            <p><strong>Longitude:</strong> ${data.longitude}</p>
-                            <p><strong>Timezone:</strong> ${data.timezone}</p>
-                            <p><strong>Currency:</strong> ${data.currency}</p>
-                            <p><strong>ISP:</strong> ${data.org}</p>
-                            <p><strong>ASN:</strong> ${data.asn}</p>
+                            <p><strong>IP Address:</strong> ${data.ip || 'N/A'}</p>
+                            <p><strong>Country:</strong> ${data.country_name || 'N/A'} (${data.country_code || 'N/A'})</p>
+                            <p><strong>Region:</strong> ${data.region || 'N/A'} - ${data.region_code || 'N/A'}</p>
+                            <p><strong>City:</strong> ${data.city || 'N/A'}</p>
+                            <p><strong>Postal Code:</strong> ${data.postal || 'N/A'}</p>
+                            <p><strong>Latitude:</strong> ${data.latitude || 'N/A'}</p>
+                            <p><strong>Longitude:</strong> ${data.longitude || 'N/A'}</p>
+                            <p><strong>Timezone:</strong> ${data.timezone || 'N/A'}</p>
+                            <p><strong>Currency:</strong> ${data.currency || 'N/A'}</p>
+                            <p><strong>ISP:</strong> ${data.org || 'N/A'}</p>
+                            <p><strong>ASN:</strong> ${data.asn || 'N/A'}</p>
                         </div>
                     `,
                     width: '600px',
@@ -646,7 +689,7 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
                 console.error('Error:', error);
                 Swal.fire({
                     title: 'Error',
-                    text: 'Could not fetch location information. Please try again.',
+                    text: 'Could not fetch location information. The IP geolocation service may be unavailable.',
                     icon: 'error'
                 });
             });
@@ -669,18 +712,18 @@ $stats['unique_ips_count'] = count($stats['unique_ips']);
     }
     
     // Initialize tooltips
-    $(document).ready(function() {
+    document.addEventListener('DOMContentLoaded', function() {
         // Enable Bootstrap tooltips
         var tooltipTriggerList = [].slice.call(document.querySelectorAll('[title]'));
         var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
             return new bootstrap.Tooltip(tooltipTriggerEl);
         });
         
-        // Auto-refresh every 60 seconds
-        setInterval(function() {
-            // You can implement AJAX refresh here instead of full page reload
-            console.log('Auto-refresh triggered');
-        }, 60000);
+        // Auto-refresh every 60 seconds (optional)
+        // setInterval(function() {
+        //     // You can implement AJAX refresh here instead of full page reload
+        //     console.log('Auto-refresh triggered');
+        // }, 60000);
     });
 </script>
 

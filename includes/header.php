@@ -399,6 +399,11 @@ $page_titles = [
                         <i class="fas fa-archive"></i> Export logs
                     </a>
                 </li>
+                  <li class="nav-item">
+                    <a class="nav-link <?php echo $current_page == 'user-tracker.php' ? 'active' : ''; ?>" href="<?php echo APP_URL; ?>/pages/user-tracker.php">
+                        <i class="fas fa-archive"></i> User Tracker
+                    </a>
+                </li>
                 <li class="nav-item">
                     <a class="nav-link <?php echo $current_page == 'settings.php' ? 'active' : ''; ?>" href="<?php echo APP_URL; ?>/auth/settings.php">
                         <i class="fas fa-cog"></i> Settings

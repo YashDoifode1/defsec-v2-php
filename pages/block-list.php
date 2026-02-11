@@ -1,20 +1,92 @@
 <?php
+// block-list.php
 require_once '../includes/header.php';
+require_once '../includes/auth.php';
+require_once '../includes/db.php';
 
-/* --------------------------------
-   AUTH CHECK
---------------------------------- */
+// Start output buffering to prevent header issues
+ob_start();
+
 // Check if user is logged in
-if (!isset($_SESSION['user_id']) || empty($_SESSION['user_id'])) {
+if (!$auth->isLoggedIn()) {
     header("Location: login.php");
+    ob_end_flush();
     exit();
 }
 
+// Get logged-in user ID from session
 $userId = $_SESSION['user_id'] ?? null;
-$websiteId = $_SESSION['website_id'] ?? null;
+if (!$userId) {
+    header("Location: login.php");
+    ob_end_flush();
+    exit();
+}
 
-if (!$userId || !$websiteId) {
-    die("Unauthorized access. User session missing.");
+// Get website ID (you might want to make this selectable)
+$websiteId = $_SESSION['website_id'] ?? 1;
+
+/* --------------------------------
+   HANDLE BLOCK ACTION FROM USER TRACKER
+--------------------------------- */
+if (isset($_GET['ip'])) {
+    $ip_to_block = filter_var($_GET['ip'], FILTER_VALIDATE_IP);
+    
+    // Generate CSRF token if not exists
+    if (!isset($_SESSION['csrf_tokens'])) {
+        $_SESSION['csrf_tokens'] = [];
+    }
+    
+    $csrf_block_token = bin2hex(random_bytes(32));
+    $_SESSION['csrf_tokens']['block_ip'] = $csrf_block_token;
+    
+    if ($ip_to_block) {
+        // Check if IP is already blocked
+        $checkStmt = $pdo->prepare("
+            SELECT id FROM blocked_ips 
+            WHERE ip = ? AND user_id = ? AND website_id = ?
+            AND (expiry_time = '00:00:00' OR DATE_ADD(created_at, INTERVAL TIME_TO_SEC(expiry_time) SECOND) > NOW())
+        ");
+        $checkStmt->execute([$ip_to_block, $userId, $websiteId]);
+        
+        if (!$checkStmt->fetch()) {
+            // Insert new block
+            $stmt = $pdo->prepare("
+                INSERT INTO blocked_ips (user_id, ip, website_id, reason, created_at, expiry_time)
+                VALUES (?, ?, ?, 'Manual block from user tracker', NOW(), '24:00:00')
+            ");
+            
+            $stmt->execute([$userId, $ip_to_block, $websiteId]);
+            
+            // Also log to attack_logs for tracking
+            $logStmt = $pdo->prepare("
+                INSERT INTO attack_logs (user_id, website_id, timestamp, attack_type, severity, ip_address, user_agent, attack_payload, request_url)
+                VALUES (?, ?, NOW(), 'MANUAL_BLOCK', 'Medium', ?, ?, 'Manual IP Block', 'User Tracker')
+            ");
+            $logStmt->execute([$userId, $websiteId, $ip_to_block, $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown']);
+            
+            $block_message = "IP $ip_to_block has been blocked successfully.";
+            $message_type = "success";
+        } else {
+            $block_message = "IP $ip_to_block is already blocked.";
+            $message_type = "warning";
+        }
+    }
+    
+    // Store flash message and redirect
+    $_SESSION['flash_message'] = $block_message;
+    $_SESSION['flash_type'] = $message_type;
+    
+    // Clear output buffer and redirect
+    ob_end_clean();
+    header("Location: user-tracker.php");
+    exit();
+}
+
+// Check for other redirect conditions before any output
+if (isset($_GET['action']) && $_GET['action'] === 'redirect') {
+    ob_end_clean();
+    header("Location: user-tracker.php");
+    exit();
 }
 
 /* --------------------------------
@@ -30,7 +102,7 @@ try {
 }
 
 /* --------------------------------
-   HANDLE BLOCK ACTION
+   HANDLE BLOCK ACTION (FROM FORM)
 --------------------------------- */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['block_ip'])) {
     // Generate CSRF token if not exists
@@ -63,7 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['block_ip'])) {
             $checkStmt->execute([$ip, $userId, $websiteId]);
             
             if ($checkStmt->fetch()) {
-                // Already blocked, show message
+                // Already blocked
                 $block_message = "IP $ip is already blocked for this website.";
                 $message_type = "warning";
             } else {
@@ -75,8 +147,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['block_ip'])) {
                 
                 $stmt->execute([$userId, $ip, $websiteId, $reason, $expiry_time]);
                 
-                // Log the action
-                logAction($pdo, $userId, $websiteId, 'BLOCK_IP', "Blocked IP: $ip - Reason: $reason");
+                // Also log to attack_logs for tracking
+                $logStmt = $pdo->prepare("
+                    INSERT INTO attack_logs (user_id, website_id, timestamp, attack_type, severity, ip_address, user_agent, attack_payload, request_url)
+                    VALUES (?, ?, NOW(), 'MANUAL_BLOCK', 'Medium', ?, ?, ?, 'Block List')
+                ");
+                $logStmt->execute([$userId, $websiteId, $ip, $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown', $reason]);
                 
                 $block_message = "IP $ip has been blocked successfully.";
                 $message_type = "success";
@@ -117,9 +193,6 @@ if (isset($_GET['unblock'])) {
             ");
             
             $stmt->execute([$ip, $userId, $websiteId]);
-            
-            // Log the action
-            logAction($pdo, $userId, $websiteId, 'UNBLOCK_IP', "Unblocked IP: $ip");
             
             $unblock_message = "IP $ip has been unblocked successfully.";
             $message_type = "success";
@@ -168,7 +241,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
                         WHERE ip = ? AND user_id = ? AND website_id = ?
                     ");
                     $stmt->execute([$ip, $userId, $websiteId]);
-                    $action = 'unblocked';
                 } elseif ($bulk_action === 'block') {
                     // Check if already blocked
                     $checkStmt = $pdo->prepare("
@@ -184,7 +256,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
                             VALUES (?, ?, ?, 'Bulk block from list', NOW(), '24:00:00')
                         ");
                         $stmt->execute([$userId, $ip, $websiteId]);
-                        $action = 'blocked';
                     } else {
                         continue; // Already blocked
                     }
@@ -202,36 +273,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
             $bulk_message .= " Failed to process $error_count IP(s).";
         }
         $message_type = $success_count > 0 ? "success" : "warning";
-        
-        // Log bulk action
-        logAction($pdo, $userId, $websiteId, 'BULK_' . strtoupper($bulk_action), 
-            "$success_count IP(s) " . ($bulk_action === 'unblock' ? 'unblocked' : 'blocked'));
     }
     
     // Clear CSRF token after use
     unset($_SESSION['csrf_tokens']['bulk_ips']);
-}
-
-/* --------------------------------
-   HELPER FUNCTION FOR LOGGING
---------------------------------- */
-function logAction($pdo, $userId, $websiteId, $actionType, $details) {
-    try {
-        $stmt = $pdo->prepare("
-            INSERT INTO login_logs (user_id, action_type, details, ip_address, user_agent, website_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ");
-        $stmt->execute([
-            $userId,
-            $actionType,
-            $details,
-            $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
-            $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown',
-            $websiteId
-        ]);
-    } catch (Exception $e) {
-        // Silently fail on logging errors
-    }
 }
 
 /* --------------------------------
@@ -359,30 +404,9 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
             </div>
             <div>
                 <div class="d-flex gap-2 align-items-center">
-                    <div class="dropdown">
-                        <button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                            <i class="fas fa-chart-bar me-1"></i> Stats
-                        </button>
-                        <ul class="dropdown-menu dropdown-menu-dark">
-                            <li><h6 class="dropdown-header">Blocking Statistics</h6></li>
-                            <li><a class="dropdown-item" href="#">
-                                <i class="fas fa-shield-alt text-danger me-2"></i>
-                                Total Blocked: <span class="badge bg-danger float-end"><?php echo $stats['total']; ?></span>
-                            </a></li>
-                            <li><a class="dropdown-item" href="#">
-                                <i class="fas fa-infinity text-warning me-2"></i>
-                                Permanent: <span class="badge bg-warning float-end"><?php echo $stats['permanent']; ?></span>
-                            </a></li>
-                            <li><a class="dropdown-item" href="#">
-                                <i class="fas fa-clock text-info me-2"></i>
-                                Temporary: <span class="badge bg-info float-end"><?php echo $stats['active_temporary']; ?></span>
-                            </a></li>
-                            <li><a class="dropdown-item" href="#">
-                                <i class="fas fa-hourglass-end text-secondary me-2"></i>
-                                Expired: <span class="badge bg-secondary float-end"><?php echo $stats['expired']; ?></span>
-                            </a></li>
-                        </ul>
-                    </div>
+                    <a href="user-tracker.php" class="btn btn-sm btn-outline-primary">
+                        <i class="fas fa-arrow-left me-1"></i> Back to Tracker
+                    </a>
                     <a href="web-security.php" class="btn btn-sm btn-outline-info">
                         <i class="fas fa-bug me-1"></i> View Attacks
                     </a>
@@ -489,15 +513,37 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
         <div class="dashboard-card h-100">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0"><i class="fas fa-plus-circle me-2 text-success"></i>Block New IP</h5>
-                <button class="btn btn-sm btn-outline-info" onclick="showRecentAttacks()">
-                    <i class="fas fa-history me-1"></i> Recent Attacks
-                </button>
             </div>
             
             <?php if (isset($block_message)): ?>
                 <div class="alert alert-<?php echo $message_type; ?> alert-dismissible fade show">
                     <i class="fas fa-<?php echo $message_type == 'success' ? 'check-circle' : ($message_type == 'warning' ? 'exclamation-triangle' : 'times-circle'); ?> me-2"></i>
                     <?php echo htmlspecialchars($block_message); ?>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
+                </div>
+            <?php endif; ?>
+            
+            <?php if (isset($_SESSION['flash_message'])): ?>
+                <div class="alert alert-<?php echo $_SESSION['flash_type']; ?> alert-dismissible fade show">
+                    <i class="fas fa-<?php echo $_SESSION['flash_type'] == 'success' ? 'check-circle' : ($_SESSION['flash_type'] == 'warning' ? 'exclamation-triangle' : 'times-circle'); ?> me-2"></i>
+                    <?php echo htmlspecialchars($_SESSION['flash_message']); ?>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
+                </div>
+                <?php unset($_SESSION['flash_message'], $_SESSION['flash_type']); ?>
+            <?php endif; ?>
+            
+            <?php if (isset($unblock_message)): ?>
+                <div class="alert alert-<?php echo $message_type; ?> alert-dismissible fade show">
+                    <i class="fas fa-<?php echo $message_type == 'success' ? 'check-circle' : 'times-circle'; ?> me-2"></i>
+                    <?php echo htmlspecialchars($unblock_message); ?>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
+                </div>
+            <?php endif; ?>
+            
+            <?php if (isset($bulk_message)): ?>
+                <div class="alert alert-<?php echo $message_type; ?> alert-dismissible fade show">
+                    <i class="fas fa-<?php echo $message_type == 'success' ? 'check-circle' : 'exclamation-triangle'; ?> me-2"></i>
+                    <?php echo htmlspecialchars($bulk_message); ?>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
                 </div>
             <?php endif; ?>
@@ -511,36 +557,29 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
                         <span class="input-group-text"><i class="fas fa-network-wired"></i></span>
                         <input type="text" class="form-control" id="ip" name="ip" 
                                placeholder="e.g., 192.168.1.1" required
-                               pattern="^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\/\d{1,2})?$">
+                               value="<?php echo isset($_GET['suggest_ip']) ? htmlspecialchars($_GET['suggest_ip']) : ''; ?>">
                     </div>
-                    <div class="form-text">Enter a valid IPv4 address or CIDR (e.g., 192.168.1.0/24)</div>
+                    <div class="form-text">Enter a valid IPv4 address</div>
                 </div>
                 
-                <div class="row g-2 mb-3">
-                    <div class="col-md-6">
-                        <label for="expiry_hours" class="form-label">Block Duration</label>
-                        <select class="form-control" id="expiry_hours" name="expiry_hours">
-                            <option value="24">24 Hours</option>
-                            <option value="168" selected>7 Days</option>
-                            <option value="720">30 Days</option>
-                            <option value="0">Permanent</option>
-                        </select>
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label">&nbsp;</label>
-                        <div class="d-flex align-items-center h-100">
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="notify_on_expiry" name="notify_on_expiry" checked>
-                                <label class="form-check-label small" for="notify_on_expiry">Notify on expiry</label>
-                            </div>
-                        </div>
-                    </div>
+                <div class="mb-3">
+                    <label for="expiry_hours" class="form-label">Block Duration</label>
+                    <select class="form-control" id="expiry_hours" name="expiry_hours">
+                        <option value="1">1 Hour</option>
+                        <option value="6">6 Hours</option>
+                        <option value="24" selected>24 Hours</option>
+                        <option value="168">7 Days</option>
+                        <option value="720">30 Days</option>
+                        <option value="0">Permanent</option>
+                    </select>
                 </div>
                 
                 <div class="mb-3">
                     <label for="reason" class="form-label">Reason</label>
                     <textarea class="form-control" id="reason" name="reason" 
-                              rows="3" placeholder="Reason for blocking this IP..."></textarea>
+                              rows="3" placeholder="Reason for blocking this IP..."><?php 
+                        echo isset($_GET['suggest_reason']) ? htmlspecialchars($_GET['suggest_reason']) : ''; 
+                    ?></textarea>
                 </div>
                 
                 <div class="d-grid gap-2">
@@ -554,11 +593,17 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
             </form>
             
             <div class="mt-4 pt-3 border-top">
-                <h6 class="mb-3"><i class="fas fa-info-circle me-2 text-info"></i>Information</h6>
-                <div class="alert alert-info small">
-                    <i class="fas fa-lightbulb me-2"></i>
-                    <strong>Tip:</strong> Use CIDR notation to block IP ranges. Permanent blocks never expire. 
-                    Temporary blocks auto-remove after expiration.
+                <h6 class="mb-3"><i class="fas fa-info-circle me-2 text-info"></i>Quick Actions</h6>
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-outline-info" onclick="suggestRecentAttacker()">
+                        <i class="fas fa-bolt me-2"></i> Suggest Recent Attacker
+                    </button>
+                    <button type="button" class="btn btn-outline-warning" onclick="suggestVPNUser()">
+                        <i class="fas fa-user-secret me-2"></i> Suggest VPN User
+                    </button>
+                    <a href="user-tracker.php" class="btn btn-outline-primary">
+                        <i class="fas fa-search me-2"></i> Browse User Tracker
+                    </a>
                 </div>
             </div>
         </div>
@@ -593,24 +638,7 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
                 </div>
             </div>
             
-            <!-- Messages -->
-            <?php if (isset($unblock_message)): ?>
-                <div class="alert alert-<?php echo $message_type; ?> alert-dismissible fade show">
-                    <i class="fas fa-<?php echo $message_type == 'success' ? 'check-circle' : 'times-circle'; ?> me-2"></i>
-                    <?php echo htmlspecialchars($unblock_message); ?>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
-                </div>
-            <?php endif; ?>
-            
-            <?php if (isset($bulk_message)): ?>
-                <div class="alert alert-<?php echo $message_type; ?> alert-dismissible fade show">
-                    <i class="fas fa-<?php echo $message_type == 'success' ? 'check-circle' : 'exclamation-triangle'; ?> me-2"></i>
-                    <?php echo htmlspecialchars($bulk_message); ?>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
-                </div>
-            <?php endif; ?>
-            
-            <!-- Bulk Actions Bar (shown when IPs are selected) -->
+            <!-- Bulk Actions Bar -->
             <div class="mb-3" id="bulkActions" style="display: none;">
                 <div class="bg-dark rounded p-3 border border-secondary">
                     <div class="d-flex justify-content-between align-items-center">
@@ -636,7 +664,7 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
             
             <?php if (!empty($blocked_ips)): ?>
             <div class="table-responsive">
-                <table class="table table-dark table-hover table-striped">
+                <table class="table table-dark table-hover">
                     <thead>
                         <tr>
                             <th width="50">
@@ -679,9 +707,6 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
                                 <div class="d-flex align-items-center">
                                     <i class="fas fa-network-wired text-muted me-2"></i>
                                     <code class="badge bg-dark"><?= htmlspecialchars($row['ip']) ?></code>
-                                    <?php if (strpos($row['ip'], '/') !== false): ?>
-                                        <span class="badge bg-info ms-1" title="IP Range">CIDR</span>
-                                    <?php endif; ?>
                                 </div>
                             </td>
                             <td>
@@ -703,8 +728,8 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
                                         <?= $status_text ?>
                                     </span>
                                     <?php if ($status === 'active' && $row['expiry_hours'] > 0): ?>
-                                        <small class="text-muted" title="Expires in <?= round($row['expiry_hours']) ?> hours">
-                                            <?= round($row['expiry_hours']) ?>h
+                                        <small class="text-muted">
+                                            <?= round($row['expiry_hours']) ?>h left
                                         </small>
                                     <?php endif; ?>
                                 </div>
@@ -722,11 +747,11 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
                                        title="Unblock">
                                         <i class="fas fa-unlock"></i>
                                     </a>
-                                    <button class="btn btn-outline-warning" 
-                                            onclick="editBlock('<?= htmlspecialchars($row['ip']) ?>')"
-                                            title="Edit">
-                                        <i class="fas fa-edit"></i>
-                                    </button>
+                                    <a href="user-tracker.php?search=<?= urlencode($row['ip']) ?>" 
+                                       class="btn btn-outline-primary"
+                                       title="Search in Tracker">
+                                        <i class="fas fa-search"></i>
+                                    </a>
                                 </div>
                             </td>
                         </tr>
@@ -736,46 +761,46 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
             </div>
             
             <!-- Pagination -->
-            <?php if ($total_pages > 1): ?>
-            <div class="mt-4">
-                <nav aria-label="Blocked IPs pagination">
-                    <ul class="pagination justify-content-center">
-                        <?php if ($page > 1): ?>
-                            <li class="page-item">
-                                <a class="page-link" href="?page=<?= $page - 1 ?>&search=<?= urlencode($search) ?>&status=<?= $status_filter ?>&sort=<?= $sort_column ?>&order=<?= $sort_order ?>" 
-                                   aria-label="Previous">
-                                    <span aria-hidden="true">&laquo;</span>
-                                </a>
-                            </li>
-                        <?php endif; ?>
-                        
-                        <?php 
-                        $start = max(1, $page - 2);
-                        $end = min($total_pages, $start + 4);
-                        if ($end - $start < 4) {
-                            $start = max(1, $end - 4);
-                        }
-                        
-                        for ($i = $start; $i <= $end; $i++): ?>
-                            <li class="page-item <?= $i == $page ? 'active' : '' ?>">
-                                <a class="page-link" href="?page=<?= $i ?>&search=<?= urlencode($search) ?>&status=<?= $status_filter ?>&sort=<?= $sort_column ?>&order=<?= $sort_order ?>">
-                                    <?= $i ?>
-                                </a>
-                            </li>
-                        <?php endfor; ?>
-                        
-                        <?php if ($page < $total_pages): ?>
-                            <li class="page-item">
-                                <a class="page-link" href="?page=<?= $page + 1 ?>&search=<?= urlencode($search) ?>&status=<?= $status_filter ?>&sort=<?= $sort_column ?>&order=<?= $sort_order ?>" 
-                                   aria-label="Next">
-                                    <span aria-hidden="true">&raquo;</span>
-                                </a>
-                            </li>
-                        <?php endif; ?>
-                    </ul>
-                </nav>
-            </div>
+<?php if ($total_pages > 1): ?>
+<div class="mt-4">
+    <nav aria-label="Blocked IPs pagination">
+        <ul class="pagination justify-content-center">
+            <?php if ($page > 1): ?>
+                <li class="page-item">
+                    <a class="page-link" href="?page=<?= $page - 1 ?>&search=<?= urlencode($search) ?>&status=<?= $status_filter ?>&sort=<?= $sort_column ?>&order=<?= $sort_order ?>" 
+                       aria-label="Previous">
+                        <span aria-hidden="true">&laquo;</span>
+                    </a>
+                </li>
             <?php endif; ?>
+            
+            <?php 
+            $start = max(1, $page - 2);
+            $end = min($total_pages, $start + 4);
+            if ($end - $start < 4) {
+                $start = max(1, $end - 4);
+            }
+            
+            for ($i = $start; $i <= $end; $i++): ?>
+                <li class="page-item <?= $i == $page ? 'active' : '' ?>">
+                    <a class="page-link" href="?page=<?= $i ?>&search=<?= urlencode($search) ?>&status=<?= $status_filter ?>&sort=<?= $sort_column ?>&order=<?= $sort_order ?>">
+                        <?= $i ?>
+                    </a>
+                </li>
+            <?php endfor; ?>
+            
+            <?php if ($page < $total_pages): ?>
+                <li class="page-item">
+                    <a class="page-link" href="?page=<?= $page + 1 ?>&search=<?= urlencode($search) ?>&status=<?= $status_filter ?>&sort=<?= $sort_column ?>&order=<?= $sort_order ?>" 
+                       aria-label="Next">
+                        <span aria-hidden="true">&raquo;</span>
+                    </a>
+                </li>
+            <?php endif; ?>
+        </ul>
+    </nav>
+</div>
+<?php endif; ?>
             
             <!-- Export and Tools -->
             <div class="mt-4 pt-3 border-top">
@@ -787,14 +812,6 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
                         <?php endif; ?>
                     </div>
                     <div class="btn-group">
-                        <a href="api/export-blocked-ips.php?format=csv&website_id=<?= $websiteId ?>" 
-                           class="btn btn-sm btn-outline-primary">
-                            <i class="fas fa-file-csv me-1"></i> Export CSV
-                        </a>
-                        <a href="api/export-blocked-ips.php?format=json&website_id=<?= $websiteId ?>" 
-                           class="btn btn-sm btn-outline-info">
-                            <i class="fas fa-file-code me-1"></i> Export JSON
-                        </a>
                         <button class="btn btn-sm btn-outline-warning" onclick="cleanExpiredIPs()">
                             <i class="fas fa-broom me-1"></i> Clean Expired
                         </button>
@@ -837,72 +854,21 @@ $_SESSION['csrf_tokens']['unblock_ip'] = $csrf_unblock_token;
             </div>
             <div class="modal-footer border-secondary">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                <a href="#" id="viewGeolocationBtn" class="btn btn-info" target="_blank">
-                    <i class="fas fa-map-marker-alt me-1"></i> Geolocation
-                </a>
-                <a href="#" id="viewAttacksBtn" class="btn btn-danger">
-                    <i class="fas fa-bug me-1"></i> View Attacks
-                </a>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Recent Attacks Modal -->
-<div class="modal fade" id="recentAttacksModal" tabindex="-1">
-    <div class="modal-dialog modal-xl">
-        <div class="modal-content bg-dark">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title"><i class="fas fa-history me-2"></i>Recent Attacks - Suggested IPs to Block</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body" id="recentAttacksContent">
-                Loading recent attacks...
-            </div>
-            <div class="modal-footer border-secondary">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                <button type="button" class="btn btn-danger" onclick="blockAllSuggested()">
-                    <i class="fas fa-ban me-1"></i> Block All Suggested
+                <button type="button" class="btn btn-danger" onclick="blockIPFromModal()">
+                    <i class="fas fa-ban me-1"></i> Block This IP
                 </button>
             </div>
         </div>
     </div>
 </div>
 
+<!-- SweetAlert2 -->
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+
 <script>
 $(document).ready(function() {
-    // Validate IP address format
-    $('#ip').on('blur', function() {
-        const ip = $(this).val().trim();
-        if (ip) {
-            if (isValidIPOrCIDR(ip)) {
-                $(this).removeClass('is-invalid').addClass('is-valid');
-                $(this).next('.form-text').html('<span class="text-success">Valid IP/CIDR format</span>');
-            } else {
-                $(this).removeClass('is-valid').addClass('is-invalid');
-                $(this).next('.form-text').html('<span class="text-danger">Invalid IP address or CIDR format</span>');
-            }
-        } else {
-            $(this).removeClass('is-valid is-invalid');
-            $(this).next('.form-text').text('Enter a valid IPv4 address or CIDR (e.g., 192.168.1.0/24)');
-        }
-    });
-    
-    function isValidIPOrCIDR(ip) {
-        // Validate IPv4 with optional CIDR
-        const pattern = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\/\d{1,2})?$/;
-        if (!pattern.test(ip)) return false;
-        
-        // Validate CIDR range if present
-        if (ip.includes('/')) {
-            const parts = ip.split('/');
-            const cidr = parseInt(parts[1]);
-            return cidr >= 0 && cidr <= 32;
-        }
-        
-        return true;
-    }
-
     // Toggle select all checkboxes
     window.toggleSelectAll = function(source) {
         const checkboxes = document.getElementsByClassName('ip-checkbox');
@@ -965,11 +931,14 @@ $(document).ready(function() {
         const modal = new bootstrap.Modal(document.getElementById('ipDetailsModal'));
         modal.show();
         
-        // Fetch IP details
+        // Store IP for blocking
+        window.currentIP = ip;
+        
+        // Fetch IP details using AJAX
         $.ajax({
-            url: 'api/get-ip-details.php',
+            url: '../api/get-ip-info.php',
             method: 'GET',
-            data: { ip: ip, website_id: <?php echo $websiteId; ?> },
+            data: { ip: ip },
             success: function(response) {
                 if (response.success) {
                     const data = response.data;
@@ -984,11 +953,11 @@ $(document).ready(function() {
                                             <tr><td><strong>Country:</strong></td><td>${data.country || 'Unknown'}</td></tr>
                                             <tr><td><strong>ISP:</strong></td><td>${data.isp || 'Unknown'}</td></tr>
                                             <tr><td><strong>ASN:</strong></td><td>${data.asn || 'Unknown'}</td></tr>
-                                            <tr><td><strong>VPN/Proxy:</strong></td>
+                                            <tr><td><strong>Block Status:</strong></td>
                                                 <td>
-                                                    ${data.is_vpn ? '<span class="badge bg-warning me-1">VPN</span>' : ''}
-                                                    ${data.is_proxy ? '<span class="badge bg-danger me-1">Proxy</span>' : ''}
-                                                    ${!data.is_vpn && !data.is_proxy ? '<span class="badge bg-success">Direct</span>' : ''}
+                                                    ${data.is_blocked ? 
+                                                        '<span class="badge bg-danger">Currently Blocked</span>' : 
+                                                        '<span class="badge bg-success">Not Blocked</span>'}
                                                 </td>
                                             </tr>
                                         </table>
@@ -998,22 +967,16 @@ $(document).ready(function() {
                             <div class="col-md-6">
                                 <div class="card bg-dark border-secondary mb-3">
                                     <div class="card-body">
-                                        <h6><i class="fas fa-shield-alt me-2"></i>Security Information</h6>
+                                        <h6><i class="fas fa-history me-2"></i>Recent Activity</h6>
                                         <table class="table table-sm table-dark mb-0">
-                                            <tr><td><strong>Total Attacks:</strong></td><td><span class="badge bg-danger">${data.attack_count || 0}</span></td></tr>
-                                            <tr><td><strong>Last Attack:</strong></td><td>${data.last_attack || 'Never'}</td></tr>
-                                            <tr><td><strong>Block Status:</strong></td>
+                                            <tr><td><strong>Last Seen:</strong></td><td>${data.last_seen || 'Never'}</td></tr>
+                                            <tr><td><strong>Total Visits:</strong></td><td><span class="badge bg-info">${data.visit_count || 0}</span></td></tr>
+                                            <tr><td><strong>Attack Count:</strong></td><td><span class="badge bg-danger">${data.attack_count || 0}</span></td></tr>
+                                            <tr><td><strong>VPN/Proxy:</strong></td>
                                                 <td>
-                                                    ${data.is_blocked ? 
-                                                        '<span class="badge bg-danger">Currently Blocked</span>' : 
-                                                        '<span class="badge bg-success">Not Blocked</span>'}
-                                                </td>
-                                            </tr>
-                                            <tr><td><strong>Threat Level:</strong></td>
-                                                <td>
-                                                    <span class="badge bg-${data.threat_level === 'high' ? 'danger' : data.threat_level === 'medium' ? 'warning' : 'success'}">
-                                                        ${data.threat_level || 'low'}
-                                                    </span>
+                                                    ${data.is_vpn ? '<span class="badge bg-warning">VPN</span>' : 
+                                                      data.is_proxy ? '<span class="badge bg-danger">Proxy</span>' : 
+                                                      '<span class="badge bg-success">Direct</span>'}
                                                 </td>
                                             </tr>
                                         </table>
@@ -1024,15 +987,11 @@ $(document).ready(function() {
                     `;
                     
                     $('#ipDetailsContent').html(detailsHtml);
-                    
-                    // Set up button links
-                    $('#viewGeolocationBtn').attr('href', `geolocation.php?ip=${encodeURIComponent(ip)}`);
-                    $('#viewAttacksBtn').attr('href', `web-security.php?search_ip=${encodeURIComponent(ip)}`);
                 } else {
                     $('#ipDetailsContent').html(`
                         <div class="alert alert-danger">
                             <i class="fas fa-exclamation-triangle me-2"></i>
-                            Failed to load IP details: ${response.message || 'Unknown error'}
+                            ${response.message || 'Failed to load IP details.'}
                         </div>
                     `);
                 }
@@ -1048,185 +1007,114 @@ $(document).ready(function() {
         });
     }
 
-    // Show recent attacks modal
-    window.showRecentAttacks = function() {
-        $('#recentAttacksContent').html(`
-            <div class="text-center py-4">
-                <div class="spinner-border" role="status"></div>
-                <p class="mt-2">Loading recent attacks...</p>
-            </div>
-        `);
+    // Block IP from modal
+    window.blockIPFromModal = function() {
+        const ip = window.currentIP;
+        if (ip) {
+            window.location.href = `block-list.php?ip=${encodeURIComponent(ip)}`;
+        }
+    }
+
+    // Suggest recent attacker
+    window.suggestRecentAttacker = function() {
+        Swal.fire({
+            title: 'Finding recent attacker...',
+            text: 'Please wait',
+            allowOutsideClick: false,
+            didOpen: () => {
+                Swal.showLoading();
+            }
+        });
         
-        const modal = new bootstrap.Modal(document.getElementById('recentAttacksModal'));
-        modal.show();
-        
-        // Fetch recent attacks
         $.ajax({
-            url: 'api/get-recent-attacks.php',
+            url: '../api/get-recent-attacker.php',
             method: 'GET',
-            data: { website_id: <?php echo $websiteId; ?>, limit: 20 },
             success: function(response) {
-                if (response.success && response.attacks.length > 0) {
-                    let attacksHtml = `
-                        <div class="table-responsive">
-                            <table class="table table-dark table-hover">
-                                <thead>
-                                    <tr>
-                                        <th>Select</th>
-                                        <th>IP Address</th>
-                                        <th>Attack Type</th>
-                                        <th>Severity</th>
-                                        <th>Last Attack</th>
-                                        <th>Count</th>
-                                        <th>Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                    `;
-                    
-                    response.attacks.forEach(attack => {
-                        const severityClass = attack.severity === 'Critical' ? 'danger' : 
-                                             attack.severity === 'High' ? 'warning' : 
-                                             attack.severity === 'Medium' ? 'info' : 'secondary';
-                        
-                        attacksHtml += `
-                            <tr>
-                                <td><input type="checkbox" class="attack-ip-checkbox" value="${attack.ip_address}" data-reason="${attack.attack_type} attack"></td>
-                                <td><code>${attack.ip_address}</code></td>
-                                <td><span class="badge bg-secondary">${attack.attack_type}</span></td>
-                                <td><span class="badge bg-${severityClass}">${attack.severity}</span></td>
-                                <td><small>${attack.last_attack}</small></td>
-                                <td><span class="badge bg-dark">${attack.count}</span></td>
-                                <td>
-                                    <button class="btn btn-sm btn-danger" onclick="blockSingleIP('${attack.ip_address}', '${attack.attack_type} attack')">
-                                        <i class="fas fa-ban"></i> Block
-                                    </button>
-                                </td>
-                            </tr>
-                        `;
+                Swal.close();
+                if (response.success && response.ip) {
+                    $('#ip').val(response.ip);
+                    $('#reason').val('Recent attacker - ' + response.reason);
+                    Swal.fire({
+                        title: 'IP Suggestion',
+                        text: `Suggested IP: ${response.ip} - ${response.reason}`,
+                        icon: 'info',
+                        confirmButtonText: 'Block This IP'
                     });
-                    
-                    attacksHtml += `
-                                </tbody>
-                            </table>
-                        </div>
-                        <div class="mt-3">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="selectAllAttacks" onchange="toggleAllAttacks(this)">
-                                <label class="form-check-label" for="selectAllAttacks">
-                                    Select all suggested IPs for blocking
-                                </label>
-                            </div>
-                        </div>
-                    `;
-                    
-                    $('#recentAttacksContent').html(attacksHtml);
                 } else {
-                    $('#recentAttacksContent').html(`
-                        <div class="alert alert-info">
-                            <i class="fas fa-info-circle me-2"></i>
-                            No recent attacks found to suggest blocking.
-                        </div>
-                    `);
+                    Swal.fire({
+                        title: 'No Suggestions',
+                        text: 'No recent attackers found to suggest.',
+                        icon: 'info'
+                    });
                 }
             },
             error: function() {
-                $('#recentAttacksContent').html(`
-                    <div class="alert alert-danger">
-                        <i class="fas fa-exclamation-triangle me-2"></i>
-                        Failed to load recent attacks. Please try again.
-                    </div>
-                `);
+                Swal.fire({
+                    title: 'Error',
+                    text: 'Failed to fetch suggestions.',
+                    icon: 'error'
+                });
             }
         });
     }
 
-    // Block all suggested IPs
-    window.blockAllSuggested = function() {
-        const checkboxes = document.querySelectorAll('.attack-ip-checkbox:checked');
-        if (checkboxes.length === 0) {
-            alert('Please select at least one IP to block.');
-            return;
-        }
-        
-        if (confirm(`Block ${checkboxes.length} IP address(es)?`)) {
-            const formData = new FormData();
-            formData.append('csrf_token', '<?php echo $csrf_block_token; ?>');
-            formData.append('bulk_action', 'block');
-            
-            checkboxes.forEach(checkbox => {
-                formData.append('selected_ips[]', checkbox.value);
-            });
-            
-            fetch(window.location.href, {
-                method: 'POST',
-                body: formData
-            }).then(response => {
-                if (response.ok) {
-                    alert(`${checkboxes.length} IP(s) blocked successfully.`);
-                    window.location.reload();
-                } else {
-                    alert('Error blocking IPs. Please try again.');
-                }
-            });
-        }
-    }
-
-    // Block single IP from attacks list
-    window.blockSingleIP = function(ip, reason) {
-        if (confirm(`Block IP ${ip} for "${reason}"?`)) {
-            $('#ip').val(ip);
-            $('#reason').val(reason);
-            $('#blockForm').submit();
-        }
-    }
-
-    // Toggle all attacks checkboxes
-    window.toggleAllAttacks = function(source) {
-        const checkboxes = document.getElementsByClassName('attack-ip-checkbox');
-        for (let i = 0; i < checkboxes.length; i++) {
-            checkboxes[i].checked = source.checked;
-        }
-    }
-
-    // Edit block
-    window.editBlock = function(ip) {
-        // Fetch current block details and populate form
-        alertify.confirm('Edit Block', 
-            `Edit settings for IP: ${ip}<br><br>This feature is coming soon.`,
-            function() {
-                // TODO: Implement edit functionality
-                alertify.success('Edit feature coming soon');
-            },
-            function() {
-                alertify.error('Cancelled');
+    // Suggest VPN user
+    window.suggestVPNUser = function() {
+        Swal.fire({
+            title: 'Finding VPN users...',
+            text: 'Please wait',
+            allowOutsideClick: false,
+            didOpen: () => {
+                Swal.showLoading();
             }
-        );
+        });
+        
+        $.ajax({
+            url: '../api/get-vpn-user.php',
+            method: 'GET',
+            success: function(response) {
+                Swal.close();
+                if (response.success && response.ip) {
+                    $('#ip').val(response.ip);
+                    $('#reason').val('VPN/Proxy user detected');
+                    Swal.fire({
+                        title: 'VPN User Found',
+                        html: `Suggested IP: ${response.ip}<br>Country: ${response.country}<br>ISP: ${response.isp}`,
+                        icon: 'warning',
+                        confirmButtonText: 'Block This VPN User'
+                    });
+                } else {
+                    Swal.fire({
+                        title: 'No VPN Users',
+                        text: 'No VPN users found to suggest.',
+                        icon: 'info'
+                    });
+                }
+            },
+            error: function() {
+                Swal.fire({
+                    title: 'Error',
+                    text: 'Failed to fetch VPN users.',
+                    icon: 'error'
+                });
+            }
+        });
     }
 
     // Clean expired IPs
     window.cleanExpiredIPs = function() {
-        if (confirm('Remove all expired IP blocks? This action cannot be undone.')) {
-            $.ajax({
-                url: 'api/clean-expired-ips.php',
-                method: 'POST',
-                data: {
-                    website_id: <?php echo $websiteId; ?>,
-                    csrf_token: '<?php echo $csrf_bulk_token; ?>'
-                },
-                success: function(response) {
-                    if (response.success) {
-                        alertify.success(`${response.cleaned} expired IP(s) removed`);
-                        setTimeout(() => location.reload(), 1500);
-                    } else {
-                        alertify.error('Error cleaning expired IPs');
-                    }
-                },
-                error: function() {
-                    alertify.error('Error cleaning expired IPs');
-                }
-            });
-        }
+        Swal.fire({
+            title: 'Clean Expired IPs?',
+            text: 'This will permanently remove all expired IP blocks. This action cannot be undone.',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Yes, clean them',
+            cancelButtonText: 'Cancel'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                window.location.href = 'block-list.php?clean_expired=true';
+            }
+        });
     }
 
     // Sort table
@@ -1253,25 +1141,6 @@ $(document).ready(function() {
         
         window.location.href = queryString;
     }
-
-    // Auto-refresh list every 30 seconds
-    setInterval(function() {
-        // Check for new blocks from other sessions
-        $.ajax({
-            url: 'api/check-new-blocks.php',
-            method: 'GET',
-            data: { 
-                website_id: <?php echo $websiteId; ?>,
-                last_check: new Date().toISOString()
-            },
-            success: function(response) {
-                if (response.has_new_blocks) {
-                    showNotification(`${response.new_blocks} new IP(s) blocked`, 'warning');
-                    setTimeout(() => location.reload(), 3000);
-                }
-            }
-        });
-    }, 30000);
 });
 
 // Show notification
@@ -1302,7 +1171,6 @@ function showNotification(message, type = 'info') {
 </script>
 
 <style>
-/* Custom styles for block list page */
 .dashboard-card {
     transition: transform 0.2s ease, box-shadow 0.2s ease;
     background: linear-gradient(145deg, #1a1a1a, #222222);
@@ -1326,11 +1194,6 @@ function showNotification(message, type = 'info') {
     line-height: 1;
 }
 
-.stat-change {
-    font-size: 0.85rem;
-    font-weight: 500;
-}
-
 .sortable {
     cursor: pointer;
     position: relative;
@@ -1339,10 +1202,6 @@ function showNotification(message, type = 'info') {
 
 .sortable:hover {
     background-color: rgba(0, 123, 255, 0.1);
-}
-
-.table-striped > tbody > tr:nth-of-type(odd) {
-    background-color: rgba(255, 255, 255, 0.02);
 }
 
 .table-hover > tbody > tr:hover {
@@ -1358,7 +1217,6 @@ function showNotification(message, type = 'info') {
     border-radius: 10px;
 }
 
-/* IP address styling */
 code {
     background: #111;
     padding: 2px 6px;
@@ -1368,13 +1226,11 @@ code {
     color: #4ea1ff;
 }
 
-/* Badge enhancements */
 .badge {
     font-weight: 600;
     padding: 0.35em 0.65em;
 }
 
-/* Modal styling */
 .modal-content {
     background: linear-gradient(145deg, #1a1a1a, #222222);
     border: 1px solid #2a2a2a;
@@ -1388,7 +1244,6 @@ code {
     border-top-color: #444;
 }
 
-/* Alert styling */
 .alert {
     border: none;
     border-radius: 8px;
@@ -1414,7 +1269,6 @@ code {
     border-left: 4px solid #dc3545;
 }
 
-/* Form styling */
 .input-group-text {
     background-color: #2a2a2a;
     border-color: #444;
@@ -1434,15 +1288,6 @@ code {
     box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
 }
 
-.form-control.is-valid {
-    border-color: #28a745;
-}
-
-.form-control.is-invalid {
-    border-color: #dc3545;
-}
-
-/* Bulk actions bar */
 #bulkActions {
     animation: slideDown 0.3s ease;
 }
@@ -1458,7 +1303,6 @@ code {
     }
 }
 
-/* Responsive adjustments */
 @media (max-width: 768px) {
     .stat-number {
         font-size: 2.2rem;
@@ -1467,37 +1311,11 @@ code {
     .card-icon {
         font-size: 2rem;
     }
-    
-    .btn-group {
-        flex-wrap: wrap;
-        gap: 5px;
-    }
-    
-    .table-responsive {
-        font-size: 0.9rem;
-    }
-    
-    .input-group {
-        flex-wrap: wrap;
-    }
-}
-
-@media (max-width: 576px) {
-    .display-4 {
-        font-size: 2rem;
-    }
-    
-    .stat-number {
-        font-size: 1.8rem;
-    }
-    
-    .btn-sm {
-        padding: 0.25rem 0.5rem;
-        font-size: 0.75rem;
-    }
 }
 </style>
 
 <?php
+// End output buffering and flush
+ob_end_flush();
 require_once '../includes/footer.php';
 ?>
