@@ -1,3 +1,12 @@
+
+<?php ob_clean();?>
+
+
+<?php include "blocked.php";?>
+
+
+<?php ob_end_flush(); ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -384,7 +393,7 @@
                     <li><a href="#contact">Contact</a></li>
                 </ul>
             </nav>
-            <a href="http://localhost/defsec/v2/auth/login.php" 
+            <a href="http:localhost/swalambh/v2/auth/login.php" 
    style="display: inline-block; 
           padding: 12px 24px; 
           background-color: #007bff; 
@@ -403,7 +412,7 @@
         <div class="container hero-content fade-in">
             <h1>Enterprise-Grade Security Against <span class="highlight">OWASP Top 10</span> Vulnerabilities</h1>
             <p>DefSec provides comprehensive SaaS security solutions designed to protect your web applications from the most critical security risks identified by OWASP. Our automated platform integrates seamlessly into your development lifecycle.</p>
-            <a href="http://localhost/defsec/v2/auth/login.php" 
+            <a href="http:localhost/swalambh/v2/auth/login.php" 
    style="display: inline-block; 
           padding: 12px 24px; 
           background-color: #007bff; 

@@ -25,50 +25,100 @@ require_once '../includes/db.php';
 // Handle Search Query
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 
+// Debug mode
+$debug = isset($_GET['debug']) ? true : false;
+
 // Base SQL with user & website filter
 $sql = "SELECT * FROM logs WHERE user_id = :user_id AND website_id = :website_id";
 
-// Add search conditions - FIXED: Using correct column names from database schema
+// Add search conditions - FIXED: Using unique parameter names
 $params = [
     ':user_id' => $userId,
     ':website_id' => $websiteId
 ];
 
 if (!empty($search)) {
-    // Correct column names based on logs table structure:
-    // `ip`, `real_ip`, `country`, `ISP` (not ASN - that's a column but not part of logs table)
-    // `user_agent`, `digital_dna`, `city` (not country twice)
-    // `webrtc_ip`, `dns_leak_ip`, `screen_resolution`, `timezone`, `language`
-    $sql .= " AND (
-        ip LIKE :search OR 
-        real_ip LIKE :search OR 
-        country LIKE :search OR 
-        ISP LIKE :search OR 
-        user_agent LIKE :search OR 
-        digital_dna LIKE :search OR 
-        city LIKE :search OR 
-        webrtc_ip LIKE :search OR 
-        dns_leak_ip LIKE :search OR 
-        screen_resolution LIKE :search OR 
-        timezone LIKE :search OR 
-        language LIKE :search OR
-        reverse_dns LIKE :search OR
-        ASN LIKE :search
-    )";
-    $params[':search'] = "%$search%";
+    // Create unique parameter names for each LIKE condition
+    $searchConditions = [];
+    $searchColumns = [
+        'ip', 'real_ip', 'country', 'ISP', 'user_agent', 
+        'digital_dna', 'city', 'webrtc_ip', 'dns_leak_ip', 
+        'screen_resolution', 'timezone', 'language', 
+        'reverse_dns', 'ASN'
+    ];
+    
+    $i = 1;
+    foreach ($searchColumns as $column) {
+        $paramName = ":search{$i}";
+        $searchConditions[] = "{$column} LIKE {$paramName}";
+        $params[$paramName] = "%{$search}%";
+        $i++;
+    }
+    
+    $sql .= " AND (" . implode(" OR ", $searchConditions) . ")";
+}
+
+// Add additional filters if present
+if (isset($_GET['country']) && !empty($_GET['country'])) {
+    $sql .= " AND country = :country";
+    $params[':country'] = $_GET['country'];
+}
+
+if (isset($_GET['privacy']) && !empty($_GET['privacy'])) {
+    if ($_GET['privacy'] == 'vpn') {
+        $sql .= " AND is_vpn = 1";
+    } elseif ($_GET['privacy'] == 'tor') {
+        $sql .= " AND is_tor = 1";
+    } elseif ($_GET['privacy'] == 'clean') {
+        $sql .= " AND is_vpn = 0 AND is_tor = 0";
+    }
+}
+
+if (isset($_GET['time_range']) && !empty($_GET['time_range'])) {
+    if ($_GET['time_range'] == 'today') {
+        $sql .= " AND DATE(timestamp) = CURDATE()";
+    } elseif ($_GET['time_range'] == 'week') {
+        $sql .= " AND timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+    } elseif ($_GET['time_range'] == 'month') {
+        $sql .= " AND timestamp >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+    }
 }
 
 $sql .= " ORDER BY id DESC";
 
+// Debug output
+if ($debug) {
+    echo "<pre>SQL Query: " . htmlspecialchars($sql) . "</pre>";
+    echo "<pre>Parameters: ";
+    print_r($params);
+    echo "</pre>";
+}
+
 // Prepare and execute statement
 try {
     $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
+    
+    // Bind parameters
+    foreach ($params as $key => $value) {
+        $stmt->bindValue($key, $value);
+    }
+    
+    $stmt->execute();
     $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    if ($debug) {
+        echo "<pre>Query executed successfully. Found " . count($logs) . " records.</pre>";
+    }
 } catch (PDOException $e) {
     $logs = [];
     $error = "Database error: " . $e->getMessage();
     error_log($error);
+    
+    // Show more detailed error in debug mode
+    if ($debug) {
+        echo "<div class='alert alert-danger'><pre>Error Details: " . htmlspecialchars($e->getMessage()) . "</pre></div>";
+        echo "<div class='alert alert-warning'><pre>SQL Query: " . htmlspecialchars($sql) . "</pre></div>";
+    }
 }
 
 // Get summary statistics
@@ -160,106 +210,129 @@ function fetchWhoisData($ip) {
     return $whoisData;
 }
 
-// Function to fetch location information
+// Function to fetch location information using ipwho.org API
 function fetchLocationData($ip) {
     if (empty($ip) || !filter_var($ip, FILTER_VALIDATE_IP)) {
         return ['error' => 'Invalid IP address'];
     }
     
-    // Try multiple free IP geolocation services
-    $services = [
-        'ipapi' => "https://ipapi.co/{$ip}/json/",
-        'ip-api' => "http://ip-api.com/json/{$ip}",
-        'ipinfo' => "https://ipinfo.io/{$ip}/json"
-    ];
+    // Use ipwho.org API (free, no API key required)
+    $apiUrl = "https://api.ipwho.org/ip/{$ip}?format=json";
     
-    $locationData = [];
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $apiUrl,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (User-Tracker/1.0)'
+    ]);
     
-    foreach ($services as $service => $url) {
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 5,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_USERAGENT => 'Mozilla/5.0 (User-Tracker/1.0)'
-        ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+    
+    if ($httpCode === 200 && $response) {
+        $data = json_decode($response, true);
         
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        
-        if ($httpCode === 200 && $response) {
-            $data = json_decode($response, true);
+        if (isset($data['ip']) && $data['success'] !== false) {
+            $locationData = [
+                'ip' => $data['ip'] ?? $ip,
+                'success' => $data['success'] ?? true,
+                'type' => $data['type'] ?? 'Unknown',
+                'continent' => $data['continent'] ?? 'Unknown',
+                'continent_code' => $data['continent_code'] ?? 'N/A',
+                'country' => $data['country'] ?? 'Unknown',
+                'country_code' => $data['country_code'] ?? 'N/A',
+                'country_flag' => $data['country_flag'] ?? '',
+                'country_capital' => $data['country_capital'] ?? 'Unknown',
+                'country_phone' => $data['country_phone'] ?? 'N/A',
+                'country_neighbours' => $data['country_neighbours'] ?? 'N/A',
+                'region' => $data['region'] ?? 'Unknown',
+                'city' => $data['city'] ?? 'Unknown',
+                'latitude' => $data['latitude'] ?? '0',
+                'longitude' => $data['longitude'] ?? '0',
+                'asn' => $data['asn'] ?? 'N/A',
+                'org' => $data['org'] ?? 'Unknown',
+                'isp' => $data['isp'] ?? 'Unknown',
+                'timezone' => $data['timezone'] ?? 'UTC',
+                'timezone_name' => $data['timezone_name'] ?? 'UTC',
+                'timezone_dstOffset' => $data['timezone_dstOffset'] ?? '0',
+                'timezone_gmtOffset' => $data['timezone_gmtOffset'] ?? '0',
+                'timezone_gmt' => $data['timezone_gmt'] ?? 'UTC',
+                'currency' => $data['currency'] ?? 'USD',
+                'currency_code' => $data['currency_code'] ?? 'USD',
+                'currency_symbol' => $data['currency_symbol'] ?? '$',
+                'currency_rates' => $data['currency_rates'] ?? '1',
+                'currency_plural' => $data['currency_plural'] ?? 'dollars',
+                'completed_requests' => $data['completed_requests'] ?? 'N/A'
+            ];
             
-            if ($service === 'ipapi' && isset($data['ip'])) {
-                $locationData = [
-                    'ip' => $data['ip'] ?? $ip,
-                    'country' => $data['country_name'] ?? 'Unknown',
-                    'country_code' => $data['country_code'] ?? 'N/A',
-                    'region' => $data['region'] ?? 'Unknown',
-                    'city' => $data['city'] ?? 'Unknown',
-                    'postal' => $data['postal'] ?? 'N/A',
-                    'latitude' => $data['latitude'] ?? '0',
-                    'longitude' => $data['longitude'] ?? '0',
-                    'timezone' => $data['timezone'] ?? 'UTC',
-                    'isp' => $data['org'] ?? 'Unknown',
-                    'asn' => $data['asn'] ?? 'N/A'
+            // Add threat assessment
+            if (isset($data['security'])) {
+                $locationData['security'] = [
+                    'anonymous' => $data['security']['anonymous'] ?? false,
+                    'proxy' => $data['security']['proxy'] ?? false,
+                    'vpn' => $data['security']['vpn'] ?? false,
+                    'tor' => $data['security']['tor'] ?? false,
+                    'hosting' => $data['security']['hosting'] ?? false
                 ];
-                break;
-            } elseif ($service === 'ip-api' && isset($data['status']) && $data['status'] === 'success') {
-                $locationData = [
-                    'ip' => $data['query'] ?? $ip,
-                    'country' => $data['country'] ?? 'Unknown',
-                    'country_code' => $data['countryCode'] ?? 'N/A',
-                    'region' => $data['regionName'] ?? 'Unknown',
-                    'city' => $data['city'] ?? 'Unknown',
-                    'postal' => $data['zip'] ?? 'N/A',
-                    'latitude' => $data['lat'] ?? '0',
-                    'longitude' => $data['lon'] ?? '0',
-                    'timezone' => $data['timezone'] ?? 'UTC',
-                    'isp' => $data['isp'] ?? 'Unknown',
-                    'asn' => $data['as'] ?? 'N/A'
-                ];
-                break;
-            } elseif ($service === 'ipinfo' && isset($data['ip'])) {
-                $loc = explode(',', $data['loc'] ?? '0,0');
-                $locationData = [
-                    'ip' => $data['ip'] ?? $ip,
-                    'country' => $data['country'] ?? 'Unknown',
-                    'country_code' => '',
-                    'region' => $data['region'] ?? 'Unknown',
-                    'city' => $data['city'] ?? 'Unknown',
-                    'postal' => $data['postal'] ?? 'N/A',
-                    'latitude' => $loc[0] ?? '0',
-                    'longitude' => $loc[1] ?? '0',
-                    'timezone' => $data['timezone'] ?? 'UTC',
-                    'isp' => $data['org'] ?? 'Unknown',
-                    'asn' => 'N/A'
-                ];
-                break;
             }
+            
+            return $locationData;
         }
     }
     
-    // If no location data found, return basic info
-    if (empty($locationData)) {
-        $locationData = [
-            'ip' => $ip,
-            'country' => 'Unknown',
-            'country_code' => 'N/A',
-            'region' => 'Unknown',
-            'city' => 'Unknown',
-            'postal' => 'N/A',
-            'latitude' => '0',
-            'longitude' => '0',
-            'timezone' => 'UTC',
-            'isp' => 'Unknown',
-            'asn' => 'N/A'
-        ];
+    // Fallback: Try ip-api.com if ipwho.org fails
+    $fallbackUrl = "http://ip-api.com/json/{$ip}";
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $fallbackUrl,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 5,
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (User-Tracker/1.0)'
+    ]);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    if ($httpCode === 200 && $response) {
+        $data = json_decode($response, true);
+        if (isset($data['status']) && $data['status'] === 'success') {
+            return [
+                'ip' => $data['query'] ?? $ip,
+                'country' => $data['country'] ?? 'Unknown',
+                'country_code' => $data['countryCode'] ?? 'N/A',
+                'region' => $data['regionName'] ?? 'Unknown',
+                'city' => $data['city'] ?? 'Unknown',
+                'postal' => $data['zip'] ?? 'N/A',
+                'latitude' => $data['lat'] ?? '0',
+                'longitude' => $data['lon'] ?? '0',
+                'timezone' => $data['timezone'] ?? 'UTC',
+                'isp' => $data['isp'] ?? 'Unknown',
+                'asn' => $data['as'] ?? 'N/A',
+                'org' => $data['org'] ?? 'Unknown'
+            ];
+        }
     }
     
-    return $locationData;
+    // If all APIs fail, return basic info
+    return [
+        'ip' => $ip,
+        'country' => 'Unknown',
+        'country_code' => 'N/A',
+        'region' => 'Unknown',
+        'city' => 'Unknown',
+        'latitude' => '0',
+        'longitude' => '0',
+        'timezone' => 'UTC',
+        'isp' => 'Unknown',
+        'asn' => 'N/A',
+        'org' => 'Unknown',
+        'error' => $curlError ?? 'Could not fetch location data'
+    ];
 }
 
 // Handle AJAX requests for WHOIS and Location
@@ -283,9 +356,35 @@ if (isset($_GET['action'])) {
     echo json_encode(['error' => 'Invalid action']);
     exit();
 }
+
+// Debug link
+$debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
 ?>
 
 <div class="row g-4 fade-in">
+    <!-- Debug Panel (only shown in debug mode) -->
+    <?php if ($debug): ?>
+    <div class="col-12">
+        <div class="dashboard-card alert alert-warning">
+            <h5><i class="fas fa-bug me-2"></i>Debug Mode</h5>
+            <div class="row">
+                <div class="col-md-6">
+                    <p><strong>User ID:</strong> <?php echo $userId; ?></p>
+                    <p><strong>Website ID:</strong> <?php echo $websiteId; ?></p>
+                    <p><strong>Search Term:</strong> <?php echo htmlspecialchars($search); ?></p>
+                </div>
+                <div class="col-md-6">
+                    <p><strong>Records Found:</strong> <?php echo count($logs); ?></p>
+                    <p><strong>Connection Status:</strong> <?php echo $pdo ? 'Connected' : 'Not Connected'; ?></p>
+                    <a href="<?php echo $debug_link; ?>" class="btn btn-sm btn-danger">
+                        <i class="fas fa-times me-1"></i> Exit Debug Mode
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <!-- Page Header -->
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center mb-4">
@@ -297,6 +396,11 @@ if (isset($_GET['action'])) {
                 <button class="btn btn-outline-primary" onclick="refreshData()">
                     <i class="fas fa-sync-alt me-2"></i>Refresh
                 </button>
+                <?php if (!$debug): ?>
+                <a href="<?php echo $debug_link; ?>" class="btn btn-outline-warning ms-2" title="Debug Mode">
+                    <i class="fas fa-bug me-1"></i> Debug
+                </a>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -313,6 +417,7 @@ if (isset($_GET['action'])) {
             </div>
             
             <form method="GET" class="row g-3">
+                <input type="hidden" name="debug" value="<?php echo $debug ? '1' : '0'; ?>">
                 <div class="col-md-10">
                     <div class="input-group">
                         <span class="input-group-text">
@@ -339,7 +444,7 @@ if (isset($_GET['action'])) {
                     <div class="alert alert-info">
                         <i class="fas fa-info-circle me-2"></i>
                         Showing results for: <strong><?php echo htmlspecialchars($search); ?></strong>
-                        <a href="user-tracker.php" class="btn btn-sm btn-outline-danger float-end">
+                        <a href="user-tracker.php<?php echo $debug ? '?debug=1' : ''; ?>" class="btn btn-sm btn-outline-danger float-end">
                             <i class="fas fa-times me-1"></i>Clear Search
                         </a>
                     </div>
@@ -433,6 +538,7 @@ if (isset($_GET['action'])) {
             <h5 class="mb-4"><i class="fas fa-filter me-2"></i>Advanced Filters</h5>
             <form method="GET" class="row g-3">
                 <input type="hidden" name="search" value="<?php echo htmlspecialchars($search); ?>">
+                <input type="hidden" name="debug" value="<?php echo $debug ? '1' : '0'; ?>">
                 
                 <div class="col-md-3">
                     <label class="form-label">Country</label>
@@ -481,7 +587,7 @@ if (isset($_GET['action'])) {
                         <button type="submit" class="btn btn-primary">
                             <i class="fas fa-filter me-2"></i>Apply Filters
                         </button>
-                        <a href="user-tracker.php" class="btn btn-outline-secondary">
+                        <a href="user-tracker.php<?php echo $debug ? '?debug=1' : ''; ?>" class="btn btn-outline-secondary">
                             <i class="fas fa-times me-2"></i>Reset All
                         </a>
                     </div>
@@ -507,10 +613,20 @@ if (isset($_GET['action'])) {
                 </div>
             </div>
             
-            <?php if (isset($error)): ?>
+            <?php if (isset($error) && !$debug): ?>
                 <div class="alert alert-danger">
                     <i class="fas fa-exclamation-triangle me-2"></i>
                     There was an error loading the data. Please try again.
+                    <a href="user-tracker.php?debug=1" class="btn btn-sm btn-outline-warning float-end">
+                        <i class="fas fa-bug me-1"></i> Debug
+                    </a>
+                </div>
+            <?php endif; ?>
+            
+            <?php if (empty($logs) && !empty($search) && !isset($error)): ?>
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    No records found for your search criteria. Try a different search term.
                 </div>
             <?php endif; ?>
             
@@ -642,7 +758,7 @@ if (isset($_GET['action'])) {
                                             </button>
                                             <button class="btn btn-outline-success" 
                                                     onclick="fetchLocation('<?php echo htmlspecialchars($ip); ?>')"
-                                                    title="Location Info">
+                                                    title="Location Info (ipwho.org)">
                                                 <i class="fas fa-map-marker-alt"></i>
                                             </button>
                                             <a href="block-list.php?ip=<?php echo urlencode($ip); ?>" 
@@ -661,9 +777,9 @@ if (isset($_GET['action'])) {
                                         <i class="fas fa-inbox fa-3x mb-3"></i>
                                         <h5>No user tracking data found</h5>
                                         <small><?php echo !empty($search) ? 'No results found for your search criteria.' : 'Start collecting user data to see tracking information here.'; ?></small>
-                                        <?php if (!empty($search)): ?>
+                                        <?php if (!empty($search) || isset($error)): ?>
                                             <div class="mt-3">
-                                                <a href="user-tracker.php" class="btn btn-outline-primary">
+                                                <a href="user-tracker.php<?php echo $debug ? '?debug=1' : ''; ?>" class="btn btn-outline-primary">
                                                     <i class="fas fa-times me-2"></i>Clear Search
                                                 </a>
                                             </div>
@@ -731,137 +847,87 @@ if (isset($_GET['action'])) {
     
     // Fetch Whois information
     function fetchWhois(ip) {
-        if (!ip || ip === '') {
-            Swal.fire('Error', 'No IP address provided', 'error');
-            return;
+    fetch('https://rdap.arin.net/registry/ip/' + ip)
+    .then(response => {
+        if (!response.ok) {
+            throw new Error("RDAP lookup failed");
         }
-        
-        Swal.fire({
-            title: 'Fetching Whois Information...',
-            text: 'Please wait while we retrieve Whois data',
-            allowOutsideClick: false,
-            didOpen: () => {
-                Swal.showLoading();
-            }
-        });
-        
-        // Use the same page with action parameter
-        fetch(`user-tracker.php?action=whois&ip=${encodeURIComponent(ip)}`)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json();
-            })
-            .then(data => {
-                if (data.error) {
-                    Swal.fire({
-                        title: 'Error',
-                        text: data.error,
-                        icon: 'error'
+        return response.json();
+    })
+    .then(data => {
+
+        let emails = [];
+        let phones = [];
+        let addresses = [];
+
+        if (data.entities) {
+            data.entities.forEach(entity => {
+                if (entity.vcardArray && entity.vcardArray[1]) {
+                    entity.vcardArray[1].forEach(vcard => {
+                        if (vcard[0] === "email") emails.push(vcard[3]);
+                        if (vcard[0] === "tel") phones.push(vcard[3]);
+                        if (vcard[0] === "adr" && Array.isArray(vcard[3])) {
+                            addresses.push(vcard[3].filter(Boolean).join(", "));
+                        }
                     });
-                    return;
                 }
-                
-                let whoisInfo = '<div style="text-align: left; max-height: 400px; overflow-y: auto;">';
-                for (const [key, value] of Object.entries(data)) {
-                    if (value && key !== 'error') {
-                        whoisInfo += `<strong>${key}:</strong> ${value}<br>`;
-                    }
-                }
-                whoisInfo += '</div>';
-                
-                Swal.fire({
-                    title: `Whois Information for ${ip}`,
-                    html: whoisInfo || 'No Whois information available',
-                    width: '700px',
-                    confirmButtonText: 'Close',
-                    customClass: {
-                        popup: 'swal-wide'
-                    }
-                });
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                Swal.fire({
-                    title: 'Error',
-                    text: 'Could not fetch Whois information.',
-                    icon: 'error'
-                });
             });
-    }
-    
-    // Fetch location information
-    function fetchLocation(ip) {
-        if (!ip || ip === '') {
-            Swal.fire('Error', 'No IP address provided', 'error');
-            return;
         }
-        
+
         Swal.fire({
-            title: 'Fetching Location...',
-            text: 'Please wait while we retrieve location data',
-            allowOutsideClick: false,
-            didOpen: () => {
-                Swal.showLoading();
-            }
+            title: 'RDAP / Whois Information',
+            html: `
+                <div style="text-align:left;">
+                    <p><strong>IP:</strong> ${ip}</p>
+                    <p><strong>Network:</strong> ${data.name || 'N/A'}</p>
+                    <p><strong>Handle:</strong> ${data.handle || 'N/A'}</p>
+                    <p><strong>Country:</strong> ${data.country || 'N/A'}</p>
+                    <p><strong>Start Address:</strong> ${data.startAddress || 'N/A'}</p>
+                    <p><strong>End Address:</strong> ${data.endAddress || 'N/A'}</p>
+                    <hr>
+                    <p><strong>Emails:</strong> ${emails.join("<br>") || 'N/A'}</p>
+                    <p><strong>Phones:</strong> ${phones.join("<br>") || 'N/A'}</p>
+                    <p><strong>Addresses:</strong> ${addresses.join("<br>") || 'N/A'}</p>
+                </div>
+            `,
+            width: 600,
+            confirmButtonText: 'Close'
         });
-        
-        // Use the same page with action parameter
-        fetch(`user-tracker.php?action=location&ip=${encodeURIComponent(ip)}`)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json();
-            })
-            .then(data => {
-                if (data.error) {
-                    Swal.fire({
-                        title: 'Error',
-                        text: data.error,
-                        icon: 'error'
-                    });
-                    return;
-                }
-                
-                // Generate map URL if coordinates are available
-                let mapLink = '';
-                if (data.latitude && data.longitude && data.latitude !== '0' && data.longitude !== '0') {
-                    mapLink = `<br><br><a href="https://www.google.com/maps?q=${data.latitude},${data.longitude}" target="_blank" class="btn btn-sm btn-primary">
-                                <i class="fas fa-map-marked-alt me-1"></i> View on Google Maps
-                              </a>`;
-                }
-                
+
+    })
+    .catch(error => {
+        Swal.fire('Error', 'Could not fetch RDAP data', 'error');
+    });
+}
+    
+    // Fetch location information using ipwho.org API
+    function fetchLocation(ip) {
+        fetch('http://ip-api.com/json/' + ip)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
                 Swal.fire({
-                    title: `Location Information for ${ip}`,
+                    title: 'Location Information',
                     html: `
                         <div style="text-align: left;">
-                            <p><strong>IP Address:</strong> ${data.ip || 'N/A'}</p>
-                            <p><strong>Country:</strong> ${data.country || 'Unknown'} ${data.country_code ? '(' + data.country_code + ')' : ''}</p>
-                            <p><strong>Region:</strong> ${data.region || 'Unknown'}</p>
-                            <p><strong>City:</strong> ${data.city || 'Unknown'}</p>
-                            <p><strong>Postal Code:</strong> ${data.postal || 'N/A'}</p>
-                            <p><strong>Coordinates:</strong> ${data.latitude || '0'}, ${data.longitude || '0'}</p>
-                            <p><strong>Timezone:</strong> ${data.timezone || 'UTC'}</p>
-                            <p><strong>ISP:</strong> ${data.isp || 'Unknown'}</p>
-                            <p><strong>ASN:</strong> ${data.asn || 'N/A'}</p>
-                            ${mapLink}
+                            <p><strong>IP:</strong> ${data.query}</p>
+                            <p><strong>Country:</strong> ${data.country} (${data.countryCode})</p>
+                            <p><strong>Region:</strong> ${data.regionName} (${data.region})</p>
+                            <p><strong>City:</strong> ${data.city}</p>
+                            <p><strong>ZIP:</strong> ${data.zip}</p>
+                            <p><strong>ISP:</strong> ${data.isp}</p>
+                            <p><strong>Org:</strong> ${data.org}</p>
+                            <p><strong>AS:</strong> ${data.as}</p>
+                            <p><strong>Lat/Lon:</strong> ${data.lat}, ${data.lon}</p>
                         </div>
                     `,
-                    width: '600px',
-                    confirmButtonText: 'Close',
-                    showCloseButton: true
+                    confirmButtonText: 'Close'
                 });
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                Swal.fire({
-                    title: 'Error',
-                    text: 'Could not fetch location information.',
-                    icon: 'error'
-                });
-            });
+            } else {
+                Swal.fire('Error', 'Could not fetch location data', 'error');
+            }
+        })
+        .catch(error => Swal.fire('Error', 'Error fetching location data', 'error'));
     }
     
     // Refresh data

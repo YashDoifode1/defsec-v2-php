@@ -1,0 +1,86 @@
+-- ==============================
+-- Additional Tables for Advanced Fingerprinting
+-- ==============================
+
+-- Device fingerprints table
+CREATE TABLE IF NOT EXISTS device_fingerprints (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    fingerprint_hash VARCHAR(64) NOT NULL,
+    user_id INT NOT NULL,
+    website_id INT NOT NULL,
+    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    first_ip VARCHAR(45),
+    last_ip VARCHAR(45),
+    first_session_id VARCHAR(64),
+    last_session_id VARCHAR(64),
+    visit_count INT DEFAULT 1,
+    browser_data JSON,
+    is_blocked BOOLEAN DEFAULT FALSE,
+    trust_score INT DEFAULT 50,
+    notes TEXT,
+    UNIQUE KEY unique_fingerprint_tenant (fingerprint_hash, user_id, website_id),
+    INDEX idx_tenant_fingerprint (user_id, website_id, fingerprint_hash),
+    INDEX idx_last_seen (last_seen),
+    INDEX idx_blocked (is_blocked)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Proxy/VPN/Tor IPs table
+CREATE TABLE IF NOT EXISTS proxy_ips (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    ip VARCHAR(45) NOT NULL UNIQUE,
+    type ENUM('VPN', 'Proxy', 'Tor', 'Hosting') NOT NULL,
+    provider VARCHAR(100),
+    country VARCHAR(2),
+    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    confidence INT DEFAULT 80,
+    INDEX idx_ip (ip),
+    INDEX idx_type (type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Tor exit nodes table
+CREATE TABLE IF NOT EXISTS tor_exit_nodes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    ip VARCHAR(45) NOT NULL UNIQUE,
+    nickname VARCHAR(100),
+    fingerprint VARCHAR(64),
+    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_ip (ip)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Security checks log
+CREATE TABLE IF NOT EXISTS security_checks (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    ip_address VARCHAR(45),
+    user_id INT NOT NULL,
+    website_id INT NOT NULL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status ENUM('allowed', 'blocked', 'challenged') DEFAULT 'allowed',
+    user_agent TEXT,
+    session_id VARCHAR(64),
+    fingerprint_hash VARCHAR(64),
+    check_data JSON,
+    INDEX idx_tenant_time (user_id, website_id, timestamp),
+    INDEX idx_ip (ip_address),
+    INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Add new columns to existing tables
+ALTER TABLE logs 
+ADD COLUMN IF NOT EXISTS hostname VARCHAR(255),
+ADD COLUMN IF NOT EXISTS session_id VARCHAR(64),
+ADD COLUMN IF NOT EXISTS fingerprint_hash VARCHAR(64),
+ADD COLUMN IF NOT EXISTS browser_data JSON,
+ADD COLUMN IF NOT EXISTS server_data JSON,
+ADD INDEX idx_session (session_id),
+ADD INDEX idx_fingerprint (fingerprint_hash);
+
+ALTER TABLE attack_logs 
+ADD COLUMN IF NOT EXISTS fingerprint_hash VARCHAR(64),
+ADD INDEX idx_fingerprint (fingerprint_hash);
+
+ALTER TABLE blocked_ips 
+ADD COLUMN IF NOT EXISTS expiry TIMESTAMP NULL,
+ADD INDEX idx_expiry (expiry);

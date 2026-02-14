@@ -67,7 +67,7 @@ try {
     // ==============================
     // OPTIONAL: Return success
     // ==============================
-    echo "Access granted. Welcome!";
+    // echo "Access granted. Welcome!";
     
 } catch (PDOException $e) {
     http_response_code(500);
