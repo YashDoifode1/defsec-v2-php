@@ -1,192 +1,254 @@
 <?php
-ob_start();
-// Securely fetch the visitor's IP address
-function getIpAddress() {
-    $ch = curl_init("https://api64.ipify.org?format=text");
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-    $ip = curl_exec($ch);
-    curl_close($ch);
+// Constants
+define('USER_ID', 1);
+define('WEBSITE_ID', 1);
 
-    return $ip ?: ($_SERVER['REMOTE_ADDR'] ?? "Unknown"); // Fallback to REMOTE_ADDR if API fails
+// Database connection
+$host = 'localhost';
+$db   = 'mailfor';
+$user = 'root';
+$pass = '';
+$charset = 'utf8mb4';
+
+$dsn = "mysql:host=$host;dbname=$db;charset=$charset";
+$options = [
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+];
+
+try {
+    $pdo = new PDO($dsn, $user, $pass, $options);
+} catch (PDOException $e) {
+    http_response_code(500);
+    die("Database connection failed.");
+}
+
+// ---------------- IP Detection ----------------
+function getIpAddress() {
+    if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        $ipList = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+        $ip = trim($ipList[0]);
+    } else {
+        $ip = $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
+    }
+
+    return filter_var($ip, FILTER_VALIDATE_IP) ? $ip : 'Unknown';
+}
+
+function getReverseDNS($ip) {
+    return filter_var($ip, FILTER_VALIDATE_IP)
+        ? @gethostbyaddr($ip) ?: "Lookup failed"
+        : "Invalid IP";
 }
 
 $ip = getIpAddress();
+$hostname = getReverseDNS($ip);
 
-// Function to get Reverse DNS (PTR Record) securely
-function get_reverse_dns($ip) {
-    return filter_var($ip, FILTER_VALIDATE_IP) ? gethostbyaddr($ip) : "Invalid IP";
+// ---------------- Block Check ----------------
+try {
+    $stmt = $pdo->prepare("
+        SELECT 1 FROM blocked_ips 
+        WHERE ip = ? AND user_id = ? AND website_id = ?
+        LIMIT 1
+    ");
+    $stmt->execute([$ip, USER_ID, WEBSITE_ID]);
+    $blocked = $stmt->fetchColumn();
+
+    if ($blocked) {
+        http_response_code(403);
+        exit("Access denied.");
+    }
+} catch (Exception $e) {
+    // Fail open instead of breaking tracking page
 }
 
-$hostname = get_reverse_dns($ip);
-ob_end_flush();
+// Optional: you can log the visit here if needed
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    
-    <style>.body{display: none}</style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Visitor Info</title>
 </head>
-<div class="body">
-<body onload="collectBrowserData()">
-    <h2>Visitor Information</h2>
-    <p><strong>Your IP Address:</strong> <?php echo htmlspecialchars($ip); ?></p>
-    <p><strong>Reverse DNS (PTR Record):</strong> <?php echo htmlspecialchars($hostname); ?></p>
-    <p><strong>WebRTC Detected IP:</strong> <span id="webrtc-ip">Checking...</span></p>
-    <p><strong>DNS Leak Detected IP:</strong> <span id="dns-leak">Checking...</span></p>
-    <p><strong>User Agent:</strong> <span id="user-agent"></span></p>
-    <p><strong>Your Language:</strong> <span id="language"></span></p>
-    <p><strong>Platform:</strong> <span id="platform"></span></p>
-    <p><strong>Screen Resolution:</strong> <span id="screen-resolution"></span></p>
-    <p><strong>CPU Cores:</strong> <span id="cpu-cores"></span></p>
-    <p><strong>RAM (Approximate):</strong> <span id="ram"></span></p>
-    <p><strong>GPU:</strong> <span id="gpu"></span></p>
-    <p><strong>Battery:</strong> <span id="battery"></span></p>
-    <p><strong>Timezone:</strong> <span id="timezone"></span></p>
-    <p><strong>Cookies Enabled:</strong> <span id="cookies"></span></p>
-    <p><strong>DNA:</strong> <span id="digital-dna"></span></p>
-    <p><strong>Country:</strong> <span id="country">Checking...</span></p>
+<body onload="collectBrowserData()" style="display:none">
 
-    <script>
-      async function collectBrowserData() {
-          let real_ip = "<?php echo $ip; ?>";
+<script>
+async function collectBrowserData() {
 
-          let deviceInfo = {
-              userAgent: navigator.userAgent,
-              platform: navigator.platform,
-              language: navigator.language,
-              screenResolution: screen.width + "x" + screen.height,
-              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-              cookiesEnabled: navigator.cookieEnabled ? "Yes" : "No",
-              cpuCores: navigator.hardwareConcurrency || "Unknown",
-              ram: navigator.deviceMemory ? navigator.deviceMemory + " GB" : "Unknown",
-              referrer: document.referrer || "None",
-              plugins: Array.from(navigator.plugins).map(p => p.name).join(", ") || "No plugins found",
-              ip: real_ip
-          };
+    try {
 
-          let [gpu, battery, webrtcIP, dnsLeakIP] = await Promise.all([
-              getGPUInfo(),
-              getBatteryInfo(),
-              detectWebRTCLeak(),
-              checkDNSLeak()
-          ]);
+        const serverIp = "<?php echo htmlspecialchars($ip, ENT_QUOTES); ?>";
 
-          deviceInfo.gpu = gpu;
-          deviceInfo.battery = battery;
-          deviceInfo.webrtcIP = webrtcIP;
-          deviceInfo.dnsLeakIP = dnsLeakIP;
+        const deviceInfo = {
+            userAgent: navigator.userAgent || "Unknown",
+            platform: navigator.platform || "Unknown",
+            language: navigator.language || "Unknown",
+            screenResolution: screen.width + "x" + screen.height,
+            timezone: safeTimezone(),
+            cookiesEnabled: navigator.cookieEnabled ? 1 : 0,
+            cpuCores: navigator.hardwareConcurrency || 0,
+            ram: navigator.deviceMemory ? navigator.deviceMemory + " GB" : "Unknown",
+            ip: serverIp,
+            referrer: document.referrer || "None",
+            plugins: safePlugins()
+        };
 
-          // Exclude IPs from hashing
-          let dnaInput = { ...deviceInfo };
-          delete dnaInput.ip;
-          delete dnaInput.webrtcIP;
-          delete dnaInput.dnsLeakIP;
-          delete dnaInput.battery;
+        const gpu = await safeAsync(getGPUInfo);
+        const battery = await safeAsync(getBatteryInfo);
+        const webrtcIP = await safeAsync(detectWebRTCLeak);
+        const dnsLeakIP = await safeAsync(checkDNSLeak);
+        const country = await safeAsync(getCountry);
 
-          let digitalDNA = await generateSHA256(JSON.stringify(dnaInput));
-          deviceInfo.digitalDNA = digitalDNA;
+        deviceInfo.gpu = gpu;
+        deviceInfo.battery = battery;
+        deviceInfo.webrtcIP = webrtcIP;
+        deviceInfo.dnsLeakIP = dnsLeakIP;
+        deviceInfo.country = country;
 
-          // Display Data
-          document.getElementById('user-agent').innerText = deviceInfo.userAgent;
-          document.getElementById('platform').innerText = deviceInfo.platform;
-          document.getElementById('language').innerText = deviceInfo.language;
-          document.getElementById('screen-resolution').innerText = deviceInfo.screenResolution;
-          document.getElementById('timezone').innerText = deviceInfo.timezone;
-          document.getElementById('cookies').innerText = deviceInfo.cookiesEnabled;
-          document.getElementById('cpu-cores').innerText = deviceInfo.cpuCores;
-          document.getElementById('ram').innerText = deviceInfo.ram;
-          document.getElementById('gpu').innerText = deviceInfo.gpu;
-          document.getElementById('battery').innerText = deviceInfo.battery;
-          document.getElementById('webrtc-ip').innerText = webrtcIP;
-          document.getElementById('dns-leak').innerText = dnsLeakIP;
-          document.getElementById('digital-dna').innerText = digitalDNA;
-          document.getElementById('country').innerText = deviceInfo.country;
-          deviceInfo.country = await getCountry();
+        // Generate fingerprint safely
+        deviceInfo.digitalDNA = await safeAsync(() =>
+            generateSHA256(JSON.stringify({
+                ...deviceInfo,
+                ip: undefined,
+                webrtcIP: undefined,
+                dnsLeakIP: undefined,
+                battery: undefined
+            }))
+        );
 
-          sendData(deviceInfo);
-      }
-      async function getCountry() {
+        // Send to server safely
+        await fetch("data.php", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(deviceInfo)
+        }).catch(() => {});
+
+    } catch (err) {
+        console.warn("Tracking failed silently:", err);
+    }
+}
+
+/* ---------------- SAFE WRAPPERS ---------------- */
+
+async function safeAsync(fn) {
+    try {
+        return await fn();
+    } catch {
+        return "Unavailable";
+    }
+}
+
+function safeTimezone() {
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+        return "Unknown";
+    }
+}
+
+function safePlugins() {
+    try {
+        return Array.from(navigator.plugins || [])
+            .map(p => p.name)
+            .join(", ") || "None";
+    } catch {
+        return "None";
+    }
+}
+
+/* ---------------- HARDENED FUNCTIONS ---------------- */
+
+async function getGPUInfo() {
+    try {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl');
+        if (!gl) return "WebGL not supported";
+        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        return debugInfo
+            ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
+            : "Unknown GPU";
+    } catch {
+        return "Unknown GPU";
+    }
+}
+
+async function getBatteryInfo() {
+    try {
+        if (!navigator.getBattery) return "Unsupported";
+        const battery = await navigator.getBattery();
+        return Math.round(battery.level * 100) + "%";
+    } catch {
+        return "Unknown";
+    }
+}
+
+async function detectWebRTCLeak() {
+    return new Promise(resolve => {
         try {
-            const response = await fetch('https://ipapi.co/json/');
-            if (!response.ok) throw new Error('Rate limited');
-            const data = await response.json();
-            return data.country_name || 'Unknown';
+            const rtc = new RTCPeerConnection({
+                iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+            });
+
+            rtc.createDataChannel("");
+            rtc.createOffer()
+                .then(o => rtc.setLocalDescription(o))
+                .catch(() => resolve("Not detected"));
+
+            rtc.onicecandidate = e => {
+                if (e?.candidate?.candidate) {
+                    const match = e.candidate.candidate.match(/\d+\.\d+\.\d+\.\d+/);
+                    if (match) resolve(match[0]);
+                }
+            };
+
+            setTimeout(() => resolve("Not detected"), 2000);
         } catch {
-            return 'Unknown'; // Fallback to server-side detection
+            resolve("Not detected");
         }
-          }
-
-
-      async function getGPUInfo() {
-          let canvas = document.createElement('canvas');
-          let gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-          if (!gl) return "WebGL not supported";
-          let debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-          return debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : "Unknown GPU";
-      }
-
-      async function getBatteryInfo() {
-          if (!navigator.getBattery) return "Battery API not supported";
-          let battery = await navigator.getBattery();
-          return Math.round(battery.level * 100) + "%";
-      }
-
-      async function generateSHA256(input) {
-    console.log("Hashing Input:", input); // Debugging
-    const encoder = new TextEncoder();
-    const data = encoder.encode(input);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hash = Array.from(new Uint8Array(hashBuffer)).map(byte => byte.toString(16).padStart(2, '0')).join('');
-    console.log("Generated SHA-256 Hash:", hash); // Debugging
-    return hash;
+    });
 }
 
-
-      function detectWebRTCLeak() {
-          return new Promise((resolve) => {
-              let rtc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-              rtc.createDataChannel("");
-              rtc.createOffer().then(offer => rtc.setLocalDescription(offer));
-
-              rtc.onicecandidate = event => {
-                  if (event && event.candidate && event.candidate.candidate) {
-                      let match = event.candidate.candidate.match(/\d+\.\d+\.\d+\.\d+/);
-                      if (match) resolve(match[0]);
-                  }
-              };
-
-              setTimeout(() => resolve("Not detected"), 3000);
-          });
-      }
-
-      function checkDNSLeak() {
-          return fetch("https://cloudflare-dns.com/dns-query?name=example.com", {
-              method: "GET",
-              headers: { "accept": "application/dns-json" }
-          })
-          .then(response => response.json())
-          .then(data => (data.Answer ? data.Answer[0].data : "Unknown"))
-          .catch(() => "Error fetching DNS data");
-      }
-
-      function sendData(data) {
-    console.log("Sending Data to Server:", data); // Debugging
-
-    fetch("data.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data)
-    })
-    .then(response => response.text())
-    .then(result => console.log("Server Response:", result)) // Debugging
-    .catch(error => console.error("Error sending data:", error));
+async function checkDNSLeak() {
+    try {
+        const resp = await fetch(
+            "https://cloudflare-dns.com/dns-query?name=example.com",
+            { headers: { "accept": "application/dns-json" } }
+        );
+        const data = await resp.json();
+        return data?.Answer?.[0]?.data || "Unknown";
+    } catch {
+        return "Unknown";
+    }
 }
 
-    </script>
+async function getCountry() {
+    try {
+        const resp = await fetch("https://ipapi.co/json/");
+        const data = await resp.json();
+        return data?.country_name || "Unknown";
+    } catch {
+        return "Unknown";
+    }
+}
+
+async function generateSHA256(input) {
+    try {
+        const buf = new TextEncoder().encode(input);
+        const hash = await crypto.subtle.digest("SHA-256", buf);
+        return Array.from(new Uint8Array(hash))
+            .map(b => b.toString(16).padStart(2, "0"))
+            .join("");
+    } catch {
+        return "hash_failed";
+    }
+}
+
+/* Prevent ANY unhandled promise rejection */
+window.addEventListener("unhandledrejection", function (event) {
+    event.preventDefault();
+});
+</script>
+
 </body>
-</div>
 </html>
