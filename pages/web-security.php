@@ -443,11 +443,6 @@ $query_string = implode('&', $query_parts);
                     <i class="fas fa-list me-2"></i>Attack Logs 
                     <span class="badge bg-dark ms-2"><?php echo count($logs); ?> of <?php echo $total_logs; ?></span>
                 </h5>
-                <?php if (count($logs) > 0): ?>
-                <button class="btn btn-sm btn-outline-secondary" onclick="toggleAllDetails()">
-                    <i class="fas fa-expand me-1"></i> Toggle Details
-                </button>
-                <?php endif; ?>
             </div>
             
             <?php if (count($logs) > 0): ?>
@@ -513,40 +508,21 @@ $query_string = implode('&', $query_parts);
                                 </button>
                             </td>
                             <td>
-                                <button class="btn btn-sm btn-outline-primary toggle-details-btn" 
-                                        onclick="toggleDetails(<?php echo $log['id']; ?>, this)">
-                                    <i class="fas fa-eye me-1"></i> Details
+                                <button class="btn btn-sm btn-outline-primary view-details-btn" 
+                                        data-log-id="<?php echo $log['id']; ?>"
+                                        data-attack-type="<?php echo htmlspecialchars($log['attack_type']); ?>"
+                                        data-severity="<?php echo htmlspecialchars($log['severity']); ?>"
+                                        data-ip="<?php echo htmlspecialchars($log['ip_address']); ?>"
+                                        data-user-agent="<?php echo htmlspecialchars($log['user_agent']); ?>"
+                                        data-payload="<?php echo htmlspecialchars($log['attack_payload']); ?>"
+                                        data-url="<?php echo htmlspecialchars($log['request_url']); ?>"
+                                        data-timestamp="<?php echo htmlspecialchars($log['timestamp']); ?>">
+                                    <i class="fas fa-eye me-1"></i> View Details
                                 </button>
                                 <a href="block-list.php?ip=<?php echo urlencode($log['ip_address']); ?>&website_id=<?php echo $websiteId; ?>" 
                                    class="btn btn-sm btn-outline-danger ms-1 block-ip-btn" title="Block IP">
                                     <i class="fas fa-ban me-1"></i>
                                 </a>
-                            </td>
-                        </tr>
-                        <tr id="details-<?php echo $log['id']; ?>" class="d-none details-row">
-                            <td colspan="6">
-                                <div class="bg-dark rounded p-3 mt-2 border border-secondary">
-                                    <div class="row g-3">
-                                        <div class="col-md-6">
-                                            <h6 class="text-light"><i class="fas fa-desktop me-2"></i>User Agent</h6>
-                                            <div class="bg-black rounded p-2 small border border-dark">
-                                                <?php echo htmlspecialchars($log['user_agent']); ?>
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <h6 class="text-light"><i class="fas fa-link me-2"></i>Request URL</h6>
-                                            <div class="bg-black rounded p-2 small border border-dark">
-                                                <?php echo htmlspecialchars($log['request_url']); ?>
-                                            </div>
-                                        </div>
-                                        <div class="col-12">
-                                            <h6 class="text-light"><i class="fas fa-code me-2"></i>Attack Payload</h6>
-                                            <div class="bg-black rounded p-2 small border border-dark">
-                                                <pre class="mb-0 text-light small" style="white-space: pre-wrap; word-wrap: break-word;"><?php echo htmlspecialchars($log['attack_payload']); ?></pre>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
                             </td>
                         </tr>
                         <?php endforeach; ?>
@@ -640,6 +616,72 @@ $query_string = implode('&', $query_parts);
             <div class="modal-footer border-secondary">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                 <a href="#" id="blockIpBtn" class="btn btn-danger">
+                    <i class="fas fa-ban me-1"></i> Block IP
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Attack Details Modal -->
+<div class="modal fade" id="attackDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title"><i class="fas fa-bug me-2"></i>Attack Details</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Attack ID</label>
+                            <div class="form-control bg-dark text-light" id="detail-id"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Timestamp</label>
+                            <div class="form-control bg-dark text-light" id="detail-timestamp"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Attack Type</label>
+                            <div class="form-control bg-dark text-light" id="detail-attack-type"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Severity</label>
+                            <div class="form-control bg-dark text-light" id="detail-severity"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label text-muted">IP Address</label>
+                            <div class="form-control bg-dark text-light" id="detail-ip"></div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label text-muted">User Agent</label>
+                            <div class="form-control bg-dark text-light" style="min-height: 100px;" id="detail-user-agent"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Request URL</label>
+                            <div class="form-control bg-dark text-light" style="min-height: 60px;" id="detail-url"></div>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Attack Payload</label>
+                            <div class="form-control bg-dark text-light" style="min-height: 150px;">
+                                <pre class="mb-0 text-light small" id="detail-payload" style="white-space: pre-wrap; word-wrap: break-word;"></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a href="#" id="blockFromDetailsBtn" class="btn btn-danger">
                     <i class="fas fa-ban me-1"></i> Block IP
                 </a>
             </div>
@@ -824,60 +866,66 @@ $query_string = implode('&', $query_parts);
         attackTypesChart.render();
     }
 
-    // Toggle details for a specific log - FIXED VERSION
-    function toggleDetails(logId, buttonElement) {
-        console.log('Toggling details for log:', logId); // Debug line
+    // Show attack details in modal
+    function showAttackDetails(button) {
+        // Get data from button attributes
+        const logId = button.getAttribute('data-log-id');
+        const attackType = button.getAttribute('data-attack-type');
+        const severity = button.getAttribute('data-severity');
+        const ip = button.getAttribute('data-ip');
+        const userAgent = button.getAttribute('data-user-agent');
+        const payload = button.getAttribute('data-payload');
+        const url = button.getAttribute('data-url');
+        const timestamp = button.getAttribute('data-timestamp');
         
-        const detailsRow = document.getElementById('details-' + logId);
+        // Fill modal with data
+        document.getElementById('detail-id').textContent = '#' + logId;
+        document.getElementById('detail-timestamp').textContent = timestamp;
+        document.getElementById('detail-attack-type').textContent = attackType;
+        document.getElementById('detail-severity').innerHTML = getSeverityBadgeHTML(severity);
+        document.getElementById('detail-ip').textContent = ip;
+        document.getElementById('detail-user-agent').textContent = userAgent || 'N/A';
+        document.getElementById('detail-url').textContent = url || 'N/A';
+        document.getElementById('detail-payload').textContent = payload || 'N/A';
         
-        if (!detailsRow) {
-            console.error('Details row not found for ID:', logId);
-            return;
-        }
+        // Update block button link
+        document.getElementById('blockFromDetailsBtn').href = `block-list.php?ip=${encodeURIComponent(ip)}&website_id=<?php echo $websiteId; ?>`;
         
-        if (detailsRow.classList.contains('d-none')) {
-            detailsRow.classList.remove('d-none');
-            if (buttonElement) {
-                buttonElement.innerHTML = '<i class="fas fa-eye-slash me-1"></i> Hide';
-                buttonElement.classList.remove('btn-outline-primary');
-                buttonElement.classList.add('btn-primary');
-            }
-        } else {
-            detailsRow.classList.add('d-none');
-            if (buttonElement) {
-                buttonElement.innerHTML = '<i class="fas fa-eye me-1"></i> Details';
-                buttonElement.classList.remove('btn-primary');
-                buttonElement.classList.add('btn-outline-primary');
-            }
-        }
+        // Show modal
+        const modal = new bootstrap.Modal(document.getElementById('attackDetailsModal'));
+        modal.show();
     }
-
-    // Toggle all details
-    function toggleAllDetails() {
-        const allDetails = document.querySelectorAll('.details-row');
-        const allToggleButtons = document.querySelectorAll('.toggle-details-btn');
+    
+    // Helper function to get severity badge HTML
+    function getSeverityBadgeHTML(severity) {
+        const severityLower = severity.toLowerCase();
+        let color = 'secondary';
+        let icon = 'fa-info-circle';
         
-        if (allDetails.length === 0) return;
+        switch(severityLower) {
+            case 'critical':
+                color = 'danger';
+                icon = 'fa-fire';
+                break;
+            case 'high':
+                color = 'warning';
+                icon = 'fa-exclamation-triangle';
+                break;
+            case 'medium':
+                color = 'info';
+                icon = 'fa-exclamation-circle';
+                break;
+            case 'low':
+                color = 'success';
+                icon = 'fa-info-circle';
+                break;
+            case 'info':
+                color = 'secondary';
+                icon = 'fa-info';
+                break;
+        }
         
-        const shouldShow = allDetails[0].classList.contains('d-none');
-        
-        allDetails.forEach((details, index) => {
-            if (shouldShow) {
-                details.classList.remove('d-none');
-                if (allToggleButtons[index]) {
-                    allToggleButtons[index].innerHTML = '<i class="fas fa-eye-slash me-1"></i> Hide';
-                    allToggleButtons[index].classList.remove('btn-outline-primary');
-                    allToggleButtons[index].classList.add('btn-primary');
-                }
-            } else {
-                details.classList.add('d-none');
-                if (allToggleButtons[index]) {
-                    allToggleButtons[index].innerHTML = '<i class="fas fa-eye me-1"></i> Details';
-                    allToggleButtons[index].classList.remove('btn-primary');
-                    allToggleButtons[index].classList.add('btn-outline-primary');
-                }
-            }
-        });
+        return `<span class="badge bg-${color}"><i class="fas ${icon} me-1"></i>${severity}</span>`;
     }
 
     // Fetch IP details from ipinfo.io (free service)
@@ -1039,6 +1087,13 @@ $query_string = implode('&', $query_parts);
         initSeverityChart();
         initAttackTypesChart();
         
+        // Add event listeners for view details buttons
+        document.querySelectorAll('.view-details-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                showAttackDetails(this);
+            });
+        });
+        
         // Add event listeners for IP details buttons
         document.querySelectorAll('.ip-details-btn').forEach(button => {
             button.addEventListener('click', function() {
@@ -1064,6 +1119,7 @@ $query_string = implode('&', $query_parts);
                 }
             });
         });
+        
         console.log('DOM loaded - initialized...');
     });
 </script>
@@ -1114,9 +1170,22 @@ $query_string = implode('&', $query_parts);
         border-radius: 4px;
     }
     
-    /* Details row animation */
-    .details-row {
-        transition: all 0.3s ease;
+    /* Modal styling */
+    .modal-content {
+        border: 1px solid #495057;
+    }
+    
+    .modal-header {
+        border-bottom: 1px solid #495057;
+    }
+    
+    .modal-footer {
+        border-top: 1px solid #495057;
+    }
+    
+    .form-control[readonly] {
+        background-color: #2d2d2d;
+        cursor: text;
     }
     
     /* IP details modal styling */
