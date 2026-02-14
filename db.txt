@@ -1,0 +1,342 @@
+Based on the SQL dump, here's the database structure for the mailfor database:
+
+Database: mailfor
+Tables Overview:
+access_logs - Website access tracking
+
+allowed_countries - Country-based access control
+
+attack_logs - Security attack records
+
+blocked_ips - IP blocking management
+
+login_logs - User login tracking
+
+logs - Comprehensive visitor/fingerprint logging
+
+settings - System configuration
+
+
+
+users - Primary user management
+
+websites - Website/domain management
+
+Table Structures:
+1. access_logs
+sql
+CREATE TABLE `access_logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` bigint(20) UNSIGNED NOT NULL,
+  `website_id` bigint(20) UNSIGNED NOT NULL,
+  `ip_address` varchar(45) NOT NULL,
+  `user_agent` text DEFAULT NULL,
+  `referrer` text DEFAULT NULL,
+  `request_uri` text DEFAULT NULL,
+  `http_method` varchar(10) DEFAULT NULL,
+  `query_string` text DEFAULT NULL,
+  `session_id` varchar(128) DEFAULT NULL,
+  `username` varchar(255) DEFAULT NULL,
+  `timestamp` datetime DEFAULT current_timestamp()
+)
+Purpose: Tracks HTTP requests to protected websites.
+
+2. allowed_countries
+sql
+CREATE TABLE `allowed_countries` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `website_id` bigint(20) UNSIGNED NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `country_code` varchar(2) DEFAULT NULL,
+  `country_name` varchar(100) DEFAULT NULL,
+  `is_allowed` tinyint(1) DEFAULT 1
+)
+Purpose: Geo-blocking/geo-allowing configuration.
+
+3. attack_logs
+sql
+CREATE TABLE `attack_logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` bigint(20) UNSIGNED NOT NULL,
+  `website_id` bigint(20) UNSIGNED NOT NULL,
+  `timestamp` datetime DEFAULT current_timestamp(),
+  `attack_type` varchar(50) DEFAULT NULL,
+  `severity` enum('Critical','High','Medium','Info') DEFAULT NULL,
+  `ip_address` varchar(45) DEFAULT NULL,
+  `user_agent` varchar(255) DEFAULT NULL,
+  `attack_payload` text DEFAULT NULL,
+  `request_url` text DEFAULT NULL
+)
+Purpose: Records detected security attacks (XSS, SQLi, etc.).
+
+4. blocked_ips
+sql
+CREATE TABLE `blocked_ips` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` bigint(20) UNSIGNED NOT NULL,
+  `ip` varchar(45) NOT NULL,
+  `website_id` bigint(20) UNSIGNED NOT NULL,
+  `reason` varchar(255) DEFAULT 'Abuse',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `expiry_time` time NOT NULL
+)
+Purpose: Manages IP blocking with expiration.
+
+5. login_logs
+sql
+CREATE TABLE `login_logs` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` int(10) UNSIGNED NOT NULL,
+  `ip_address` varchar(45) NOT NULL,
+  `user_agent` text NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+)
+Purpose: Logs user authentication attempts.
+
+6. logs (Most comprehensive table)
+sql
+CREATE TABLE `logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `timestamp` timestamp NOT NULL DEFAULT current_timestamp(),
+  `ip` varchar(45) NOT NULL,
+  `real_ip` varchar(45) NOT NULL,
+  `country` varchar(100) DEFAULT 'Unknown',
+  `reverse_dns` varchar(255) DEFAULT 'Unknown',
+  `webrtc_ip` varchar(45) DEFAULT 'Unknown',
+  `dns_leak_ip` varchar(45) DEFAULT 'Unknown',
+  `user_agent` text DEFAULT NULL,
+  `screen_resolution` varchar(20) DEFAULT 'Unknown',
+  `language` varchar(20) DEFAULT 'Unknown',
+  `timezone` varchar(50) DEFAULT 'Unknown',
+  `cookies_enabled` varchar(5) DEFAULT NULL,
+  `cpu_cores` varchar(10) DEFAULT 'Unknown',
+  `ram` varchar(10) DEFAULT 'Unknown',
+  `gpu` varchar(100) DEFAULT 'Unknown',
+  `battery` varchar(10) DEFAULT 'Unknown',
+  `referrer` text DEFAULT NULL,
+  `plugins` text DEFAULT NULL,
+  `digital_dna` varchar(64) DEFAULT 'Unknown',
+  `is_vpn` tinyint(1) DEFAULT 0,
+  `is_tor` tinyint(1) DEFAULT 0,
+  `is_proxy` tinyint(1) DEFAULT 0,
+  `ASN` varchar(50) DEFAULT 'Unknown',
+  `ISP` varchar(100) DEFAULT 'Unknown',
+  `latitude` double DEFAULT NULL,
+  `longitude` double DEFAULT NULL,
+  `user_id` int(11) NOT NULL,
+  `website_id` int(11) NOT NULL
+)
+Purpose: Extensive visitor fingerprinting and tracking.
+
+7. settings
+sql
+CREATE TABLE `settings` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `setting_name` varchar(50) DEFAULT NULL,
+  `setting_value` varchar(255) DEFAULT NULL
+)
+Purpose: System configuration (VPN blocking, strict mode).
+
+
+9. users (Primary user table)
+sql
+CREATE TABLE `users` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `username` varchar(50) NOT NULL,
+  `email` varchar(100) NOT NULL,
+  `password_hash` varchar(255) NOT NULL,
+  `api_key` varchar(64) DEFAULT NULL,
+  `full_name` varchar(100) DEFAULT NULL,
+  `role` enum('admin','analyst','viewer','superadmin') DEFAULT 'viewer',
+  `status` enum('active','suspended') DEFAULT 'active',
+  `last_login` datetime DEFAULT NULL,
+  `login_attempts` int(11) DEFAULT 0,
+  `last_attempt` datetime DEFAULT NULL,
+  `is_locked` tinyint(1) DEFAULT 0,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+)
+10. websites
+sql
+CREATE TABLE `websites` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` int(10) UNSIGNED NOT NULL,
+  `site_name` varchar(255) NOT NULL,
+  `domain` varchar(255) NOT NULL,
+  `status` enum('active','paused') DEFAULT 'active',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+)
+Key Observations:
+
+
+
+
+this is my db.structure ->[Based on the SQL dump, here's the database structure for the mailfor database:
+
+Database: mailfor
+Tables Overview:
+access_logs - Website access tracking
+
+allowed_countries - Country-based access control
+
+attack_logs - Security attack records
+
+blocked_ips - IP blocking management
+
+login_logs - User login tracking
+
+logs - Comprehensive visitor/fingerprint logging
+
+settings - System configuration
+
+
+
+users - Primary user management
+
+websites - Website/domain management
+
+Table Structures:
+1. access_logs
+sql
+CREATE TABLE `access_logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` bigint(20) UNSIGNED NOT NULL,
+  `website_id` bigint(20) UNSIGNED NOT NULL,
+  `ip_address` varchar(45) NOT NULL,
+  `user_agent` text DEFAULT NULL,
+  `referrer` text DEFAULT NULL,
+  `request_uri` text DEFAULT NULL,
+  `http_method` varchar(10) DEFAULT NULL,
+  `query_string` text DEFAULT NULL,
+  `session_id` varchar(128) DEFAULT NULL,
+  `username` varchar(255) DEFAULT NULL,
+  `timestamp` datetime DEFAULT current_timestamp()
+)
+Purpose: Tracks HTTP requests to protected websites.
+
+2. allowed_countries
+sql
+CREATE TABLE `allowed_countries` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `website_id` bigint(20) UNSIGNED NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `country_code` varchar(2) DEFAULT NULL,
+  `country_name` varchar(100) DEFAULT NULL,
+  `is_allowed` tinyint(1) DEFAULT 1
+)
+Purpose: Geo-blocking/geo-allowing configuration.
+
+3. attack_logs
+sql
+CREATE TABLE `attack_logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` bigint(20) UNSIGNED NOT NULL,
+  `website_id` bigint(20) UNSIGNED NOT NULL,
+  `timestamp` datetime DEFAULT current_timestamp(),
+  `attack_type` varchar(50) DEFAULT NULL,
+  `severity` enum('Critical','High','Medium','Info') DEFAULT NULL,
+  `ip_address` varchar(45) DEFAULT NULL,
+  `user_agent` varchar(255) DEFAULT NULL,
+  `attack_payload` text DEFAULT NULL,
+  `request_url` text DEFAULT NULL
+)
+Purpose: Records detected security attacks (XSS, SQLi, etc.).
+
+4. blocked_ips
+sql
+CREATE TABLE `blocked_ips` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` bigint(20) UNSIGNED NOT NULL,
+  `ip` varchar(45) NOT NULL,
+  `website_id` bigint(20) UNSIGNED NOT NULL,
+  `reason` varchar(255) DEFAULT 'Abuse',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `expiry_time` time NOT NULL
+)
+Purpose: Manages IP blocking with expiration.
+
+5. login_logs
+sql
+CREATE TABLE `login_logs` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` int(10) UNSIGNED NOT NULL,
+  `ip_address` varchar(45) NOT NULL,
+  `user_agent` text NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+)
+Purpose: Logs user authentication attempts.
+
+6. logs (Most comprehensive table)
+sql
+CREATE TABLE `logs` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `timestamp` timestamp NOT NULL DEFAULT current_timestamp(),
+  `ip` varchar(45) NOT NULL,
+  `real_ip` varchar(45) NOT NULL,
+  `country` varchar(100) DEFAULT 'Unknown',
+  `reverse_dns` varchar(255) DEFAULT 'Unknown',
+  `webrtc_ip` varchar(45) DEFAULT 'Unknown',
+  `dns_leak_ip` varchar(45) DEFAULT 'Unknown',
+  `user_agent` text DEFAULT NULL,
+  `screen_resolution` varchar(20) DEFAULT 'Unknown',
+  `language` varchar(20) DEFAULT 'Unknown',
+  `timezone` varchar(50) DEFAULT 'Unknown',
+  `cookies_enabled` varchar(5) DEFAULT NULL,
+  `cpu_cores` varchar(10) DEFAULT 'Unknown',
+  `ram` varchar(10) DEFAULT 'Unknown',
+  `gpu` varchar(100) DEFAULT 'Unknown',
+  `battery` varchar(10) DEFAULT 'Unknown',
+  `referrer` text DEFAULT NULL,
+  `plugins` text DEFAULT NULL,
+  `digital_dna` varchar(64) DEFAULT 'Unknown',
+  `is_vpn` tinyint(1) DEFAULT 0,
+  `is_tor` tinyint(1) DEFAULT 0,
+  `is_proxy` tinyint(1) DEFAULT 0,
+  `ASN` varchar(50) DEFAULT 'Unknown',
+  `ISP` varchar(100) DEFAULT 'Unknown',
+  `latitude` double DEFAULT NULL,
+  `longitude` double DEFAULT NULL,
+  `user_id` int(11) NOT NULL,
+  `website_id` int(11) NOT NULL
+)
+Purpose: Extensive visitor fingerprinting and tracking.
+
+7. settings
+sql
+CREATE TABLE `settings` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `setting_name` varchar(50) DEFAULT NULL,
+  `setting_value` varchar(255) DEFAULT NULL
+)
+Purpose: System configuration (VPN blocking, strict mode).
+
+
+9. users (Primary user table)
+sql
+CREATE TABLE `users` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `username` varchar(50) NOT NULL,
+  `email` varchar(100) NOT NULL,
+  `password_hash` varchar(255) NOT NULL,
+  `api_key` varchar(64) DEFAULT NULL,
+  `full_name` varchar(100) DEFAULT NULL,
+  `role` enum('admin','analyst','viewer','superadmin') DEFAULT 'viewer',
+  `status` enum('active','suspended') DEFAULT 'active',
+  `last_login` datetime DEFAULT NULL,
+  `login_attempts` int(11) DEFAULT 0,
+  `last_attempt` datetime DEFAULT NULL,
+  `is_locked` tinyint(1) DEFAULT 0,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+)
+10. websites
+sql
+CREATE TABLE `websites` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` int(10) UNSIGNED NOT NULL,
+  `site_name` varchar(255) NOT NULL,
+  `domain` varchar(255) NOT NULL,
+  `status` enum('active','paused') DEFAULT 'active',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+)
+Key Observations:] can we crreate such an api.php script which is includeed in client s from server then it check for blocked_ips for their website_id , user_id by fetching inspect.php which is on server website and it fetch response by passsing api_key from users table and inspect.php get that api_key resolve user_id and website_id and check that the ip is blocked or not if its block then it blocked.php accordingly  
