@@ -514,7 +514,7 @@ $query_string = implode('&', $query_parts);
                             </td>
                             <td>
                                 <button class="btn btn-sm btn-outline-primary toggle-details-btn" 
-                                        data-log-id="<?php echo $log['id']; ?>">
+                                        onclick="toggleDetails(<?php echo $log['id']; ?>, this)">
                                     <i class="fas fa-eye me-1"></i> Details
                                 </button>
                                 <a href="block-list.php?ip=<?php echo urlencode($log['ip_address']); ?>&website_id=<?php echo $websiteId; ?>" 
@@ -528,21 +528,21 @@ $query_string = implode('&', $query_parts);
                                 <div class="bg-dark rounded p-3 mt-2 border border-secondary">
                                     <div class="row g-3">
                                         <div class="col-md-6">
-                                            <h6><i class="fas fa-desktop me-2"></i>User Agent</h6>
+                                            <h6 class="text-light"><i class="fas fa-desktop me-2"></i>User Agent</h6>
                                             <div class="bg-black rounded p-2 small border border-dark">
                                                 <?php echo htmlspecialchars($log['user_agent']); ?>
                                             </div>
                                         </div>
                                         <div class="col-md-6">
-                                            <h6><i class="fas fa-link me-2"></i>Request URL</h6>
+                                            <h6 class="text-light"><i class="fas fa-link me-2"></i>Request URL</h6>
                                             <div class="bg-black rounded p-2 small border border-dark">
                                                 <?php echo htmlspecialchars($log['request_url']); ?>
                                             </div>
                                         </div>
                                         <div class="col-12">
-                                            <h6><i class="fas fa-code me-2"></i>Attack Payload</h6>
+                                            <h6 class="text-light"><i class="fas fa-code me-2"></i>Attack Payload</h6>
                                             <div class="bg-black rounded p-2 small border border-dark">
-                                                <pre class="mb-0 text-light small"><?php echo htmlspecialchars($log['attack_payload']); ?></pre>
+                                                <pre class="mb-0 text-light small" style="white-space: pre-wrap; word-wrap: break-word;"><?php echo htmlspecialchars($log['attack_payload']); ?></pre>
                                             </div>
                                         </div>
                                     </div>
@@ -824,28 +824,38 @@ $query_string = implode('&', $query_parts);
         attackTypesChart.render();
     }
 
-    // Toggle details for a specific log
-    function toggleDetails(logId) {
+    // Toggle details for a specific log - FIXED VERSION
+    function toggleDetails(logId, buttonElement) {
+        console.log('Toggling details for log:', logId); // Debug line
+        
         const detailsRow = document.getElementById('details-' + logId);
-        const button = document.querySelector(`button[data-log-id="${logId}"]`);
+        
+        if (!detailsRow) {
+            console.error('Details row not found for ID:', logId);
+            return;
+        }
         
         if (detailsRow.classList.contains('d-none')) {
             detailsRow.classList.remove('d-none');
-            button.innerHTML = '<i class="fas fa-eye-slash me-1"></i> Hide';
-            button.classList.remove('btn-outline-primary');
-            button.classList.add('btn-primary');
+            if (buttonElement) {
+                buttonElement.innerHTML = '<i class="fas fa-eye-slash me-1"></i> Hide';
+                buttonElement.classList.remove('btn-outline-primary');
+                buttonElement.classList.add('btn-primary');
+            }
         } else {
             detailsRow.classList.add('d-none');
-            button.innerHTML = '<i class="fas fa-eye me-1"></i> Details';
-            button.classList.remove('btn-primary');
-            button.classList.add('btn-outline-primary');
+            if (buttonElement) {
+                buttonElement.innerHTML = '<i class="fas fa-eye me-1"></i> Details';
+                buttonElement.classList.remove('btn-primary');
+                buttonElement.classList.add('btn-outline-primary');
+            }
         }
     }
 
     // Toggle all details
     function toggleAllDetails() {
         const allDetails = document.querySelectorAll('.details-row');
-        const buttons = document.querySelectorAll('.toggle-details-btn');
+        const allToggleButtons = document.querySelectorAll('.toggle-details-btn');
         
         if (allDetails.length === 0) return;
         
@@ -854,17 +864,17 @@ $query_string = implode('&', $query_parts);
         allDetails.forEach((details, index) => {
             if (shouldShow) {
                 details.classList.remove('d-none');
-                if (buttons[index]) {
-                    buttons[index].innerHTML = '<i class="fas fa-eye-slash me-1"></i> Hide';
-                    buttons[index].classList.remove('btn-outline-primary');
-                    buttons[index].classList.add('btn-primary');
+                if (allToggleButtons[index]) {
+                    allToggleButtons[index].innerHTML = '<i class="fas fa-eye-slash me-1"></i> Hide';
+                    allToggleButtons[index].classList.remove('btn-outline-primary');
+                    allToggleButtons[index].classList.add('btn-primary');
                 }
             } else {
                 details.classList.add('d-none');
-                if (buttons[index]) {
-                    buttons[index].innerHTML = '<i class="fas fa-eye me-1"></i> Details';
-                    buttons[index].classList.remove('btn-primary');
-                    buttons[index].classList.add('btn-outline-primary');
+                if (allToggleButtons[index]) {
+                    allToggleButtons[index].innerHTML = '<i class="fas fa-eye me-1"></i> Details';
+                    allToggleButtons[index].classList.remove('btn-primary');
+                    allToggleButtons[index].classList.add('btn-outline-primary');
                 }
             }
         });
@@ -873,9 +883,7 @@ $query_string = implode('&', $query_parts);
     // Fetch IP details from ipinfo.io (free service)
     async function fetchIPDetails(ip) {
         try {
-            // Using ipinfo.io free service (no token required for basic info)
-            // Note: For production, get a free token from ipinfo.io to increase rate limits
-            const response = await fetch(`https://ipinfo.io/${ip}/json?token=free`);
+            const response = await fetch(`https://ipinfo.io/${ip}/json`);
             
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -931,34 +939,27 @@ $query_string = implode('&', $query_parts);
                                 <span class="badge bg-warning">Unknown</span>
                             </div>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label text-muted">Attack Count</label>
-                            <div class="form-control bg-dark text-light">
-                                <span class="badge bg-secondary">Not available</span>
-                            </div>
-                        </div>
                     </div>
                 </div>
                 <div class="alert alert-warning mt-3">
                     <i class="fas fa-exclamation-triangle me-2"></i>
-                    Could not fetch detailed IP information. The ipinfo.io service may be temporarily unavailable.
+                    Could not fetch detailed IP information.
                 </div>
             `;
         } else {
             // Display fetched IP data
-            const { city, region, country, loc, org, timezone, hostname } = ipData;
+            const { city, region, country, loc, org } = ipData;
             const [latitude, longitude] = loc ? loc.split(',') : ['', ''];
             
             let threatLevel = 'Low';
             let threatColor = 'success';
             
-            // Basic threat assessment based on known malicious IP patterns
+            // Basic threat assessment
             if (org && (org.toLowerCase().includes('tor') || org.toLowerCase().includes('vpn'))) {
                 threatLevel = 'Medium';
                 threatColor = 'warning';
             }
             
-            // Check if IP is private/local
             if (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.') || ip === '127.0.0.1') {
                 threatLevel = 'Local Network';
                 threatColor = 'info';
@@ -1002,26 +1003,11 @@ $query_string = implode('&', $query_parts);
                                 <span class="badge bg-${threatColor}"><i class="fas fa-shield-alt me-1"></i>${threatLevel}</span>
                             </div>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label text-muted">Timezone</label>
-                            <div class="form-control bg-dark text-light">
-                                <i class="fas fa-clock me-2"></i>
-                                ${timezone || 'Not available'}
-                            </div>
-                        </div>
                     </div>
                 </div>
-                ${hostname ? `
-                <div class="mb-3">
-                    <label class="form-label text-muted">Hostname</label>
-                    <div class="form-control bg-dark text-light">
-                        <i class="fas fa-server me-2"></i>${hostname}
-                    </div>
-                </div>` : ''}
                 <div class="alert alert-info mt-3">
                     <i class="fas fa-info-circle me-2"></i>
-                    IP information provided by <a href="https://ipinfo.io" target="_blank" class="alert-link">ipinfo.io</a> free service.
-                    ${!loc ? '<br><small class="text-warning">Location data may be limited without an API token.</small>' : ''}
+                    IP information provided by <a href="https://ipinfo.io" target="_blank" class="alert-link">ipinfo.io</a>
                 </div>
             `;
         }
@@ -1046,18 +1032,12 @@ $query_string = implode('&', $query_parts);
 
     // Initialize everything when page loads
     document.addEventListener('DOMContentLoaded', function() {
+        console.log('DOM loaded - initializing...');
+        
         // Initialize charts
         initSecurityScoreChart();
         initSeverityChart();
         initAttackTypesChart();
-        
-        // Add event listeners for toggle details buttons
-        document.querySelectorAll('.toggle-details-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                const logId = this.getAttribute('data-log-id');
-                toggleDetails(logId);
-            });
-        });
         
         // Add event listeners for IP details buttons
         document.querySelectorAll('.ip-details-btn').forEach(button => {
@@ -1084,11 +1064,7 @@ $query_string = implode('&', $query_parts);
                 }
             });
         });
-        
-        // Auto-refresh page every 60 seconds to get new data
-        setTimeout(function() {
-            window.location.reload();
-        }, 60000);
+        console.log('DOM loaded - initialized...');
     });
 </script>
 
