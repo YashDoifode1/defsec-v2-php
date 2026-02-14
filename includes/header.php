@@ -101,7 +101,8 @@ $page_titles = [
     'profile.php' => 'Profile',
     'export.php' => 'Export Logs',
     'user-tracker.php' => 'User Tracker',
-    'geolocation.php' => 'Geolocation'
+    'geolocation.php' => 'Geolocation',
+    'email-analysis.php' => 'header analysis toolkit'
 ];
 ?>
 <!DOCTYPE html>
@@ -518,6 +519,12 @@ $page_titles = [
                         <a class="nav-link <?php echo $current_page == 'vpn-monitoring.php' ? 'active' : ''; ?>" 
                            href="<?php echo APP_URL; ?>/pages/vpn-monitoring.php">
                             <i class="fas fa-shield-virus"></i> VPN Monitor
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link <?php echo $current_page == 'email-analysis.php' ? 'active' : ''; ?>" 
+                           href="<?php echo APP_URL; ?>/pages/email-analysis.php">
+                            <i class="fa fa-address-card"></i> header analysis
                         </a>
                     </li>
                     <li class="nav-item">
