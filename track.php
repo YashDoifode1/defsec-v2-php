@@ -1,253 +1,209 @@
 <?php
-// Constants
-define('USER_ID', 1);
-define('WEBSITE_ID', 1);
-
-// Database connection
-$host = 'localhost';
-$db   = 'mailfor';
-$user = 'root';
-$pass = '';
-$charset = 'utf8mb4';
-
-$dsn = "mysql:host=$host;dbname=$db;charset=$charset";
-$options = [
-    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-];
-
-try {
-    $pdo = new PDO($dsn, $user, $pass, $options);
-} catch (PDOException $e) {
-    http_response_code(500);
-    die("Database connection failed.");
-}
-
-// ---------------- IP Detection ----------------
+// Get real visitor IP safely (no external API)
 function getIpAddress() {
-    if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-        $ipList = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
-        $ip = trim($ipList[0]);
-    } else {
-        $ip = $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
+    if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+        return $_SERVER['HTTP_CF_CONNECTING_IP'];
     }
-
-    return filter_var($ip, FILTER_VALIDATE_IP) ? $ip : 'Unknown';
-}
-
-function getReverseDNS($ip) {
-    return filter_var($ip, FILTER_VALIDATE_IP)
-        ? @gethostbyaddr($ip) ?: "Lookup failed"
-        : "Invalid IP";
+    if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        return explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0];
+    }
+    return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
 $ip = getIpAddress();
-$hostname = getReverseDNS($ip);
 
-// ---------------- Block Check ----------------
-try {
-    $stmt = $pdo->prepare("
-        SELECT 1 FROM blocked_ips 
-        WHERE ip = ? AND user_id = ? AND website_id = ?
-        LIMIT 1
-    ");
-    $stmt->execute([$ip, USER_ID, WEBSITE_ID]);
-    $blocked = $stmt->fetchColumn();
-
-    if ($blocked) {
-        http_response_code(403);
-        exit("Access denied.");
-    }
-} catch (Exception $e) {
-    // Fail open instead of breaking tracking page
+// Reverse DNS
+function get_reverse_dns($ip) {
+    return filter_var($ip, FILTER_VALIDATE_IP) ? @gethostbyaddr($ip) : "Invalid IP";
 }
 
-// Optional: you can log the visit here if needed
+$hostname = get_reverse_dns($ip);
+
+// Server-side country detection
+function getCountryFromIP($ip) {
+    $json = @file_get_contents("http://ip-api.com/json/{$ip}?fields=country");
+    if ($json) {
+        $data = json_decode($json, true);
+        return $data['country'] ?? "Unknown";
+    }
+    return "Unknown";
+}
+
+$country = getCountryFromIP($ip);
+
+// Start output buffering if not already started
+if (ob_get_level() == 0) {
+    ob_start();
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Visitor Info</title>
+<title>Visitor Information</title>
+<style>
+    .tracking-info {
+        display: none; /* Hide tracking info from users */
+    }
+</style>
 </head>
-<body onload="collectBrowserData()" style="display:none">
+
+<body>
+<!-- Hidden tracking container -->
+<div class="tracking-info" 
+     data-ip="<?= htmlspecialchars($ip) ?>" 
+     data-hostname="<?= htmlspecialchars($hostname) ?>" 
+     data-country="<?= htmlspecialchars($country) ?>">
+</div>
 
 <script>
-async function collectBrowserData() {
-
+// Immediately invoke tracking function
+(async function trackVisitor() {
     try {
-
-        const serverIp = "<?php echo htmlspecialchars($ip, ENT_QUOTES); ?>";
-
-        const deviceInfo = {
-            userAgent: navigator.userAgent || "Unknown",
-            platform: navigator.platform || "Unknown",
-            language: navigator.language || "Unknown",
+        // Get server-side data from hidden div
+        const trackingDiv = document.querySelector('.tracking-info');
+        const serverIP = trackingDiv?.dataset.ip || 'Unknown';
+        
+        // Collect browser data
+        let deviceInfo = {
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            language: navigator.language,
             screenResolution: screen.width + "x" + screen.height,
-            timezone: safeTimezone(),
-            cookiesEnabled: navigator.cookieEnabled ? 1 : 0,
-            cpuCores: navigator.hardwareConcurrency || 0,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            cookiesEnabled: navigator.cookieEnabled ? "Yes" : "No",
+            cpuCores: navigator.hardwareConcurrency || "Unknown",
             ram: navigator.deviceMemory ? navigator.deviceMemory + " GB" : "Unknown",
-            ip: serverIp,
             referrer: document.referrer || "None",
-            plugins: safePlugins()
+            ip: serverIP, // Include server IP
+            website_id: 1, // Default website ID
+            user_id: generateUserId() // Generate or get user ID
         };
 
-        const gpu = await safeAsync(getGPUInfo);
-        const battery = await safeAsync(getBatteryInfo);
-        const webrtcIP = await safeAsync(detectWebRTCLeak);
-        const dnsLeakIP = await safeAsync(checkDNSLeak);
-        const country = await safeAsync(getCountry);
+        // Collect additional info
+        deviceInfo.gpu = await getGPUInfo();
+        deviceInfo.battery = await getBatteryInfo();
+        deviceInfo.webrtcIP = await detectWebRTCLeak();
 
-        deviceInfo.gpu = gpu;
-        deviceInfo.battery = battery;
-        deviceInfo.webrtcIP = webrtcIP;
-        deviceInfo.dnsLeakIP = dnsLeakIP;
-        deviceInfo.country = country;
+        // Generate Digital DNA
+        try {
+            let dnaInput = { ...deviceInfo };
+            delete dnaInput.webrtcIP;
+            delete dnaInput.battery;
+            delete dnaInput.user_id;
+            delete dnaInput.website_id;
+            
+            deviceInfo.digitalDNA = await generateSHA256(JSON.stringify(dnaInput));
+        } catch (e) {
+            console.warn("Hashing failed:", e);
+            deviceInfo.digitalDNA = "Unavailable";
+        }
 
-        // Generate fingerprint safely
-        deviceInfo.digitalDNA = await safeAsync(() =>
-            generateSHA256(JSON.stringify({
-                ...deviceInfo,
-                ip: undefined,
-                webrtcIP: undefined,
-                dnsLeakIP: undefined,
-                battery: undefined
-            }))
-        );
-
-        // Send to server safely
-        await fetch("data.php", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(deviceInfo)
-        }).catch(() => {});
-
-    } catch (err) {
-        console.warn("Tracking failed silently:", err);
+        // Send data to server
+        await sendData(deviceInfo);
+        
+    } catch (error) {
+        console.error('Tracking error:', error);
     }
+})();
+
+// Helper function to generate or get user ID
+function generateUserId() {
+    // Try to get existing user ID from localStorage
+    let userId = localStorage.getItem('visitor_id');
+    if (!userId) {
+        // Generate new UUID v4
+        userId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+        localStorage.setItem('visitor_id', userId);
+    }
+    return userId;
 }
 
-/* ---------------- SAFE WRAPPERS ---------------- */
-
-async function safeAsync(fn) {
+async function getGPUInfo() {
     try {
-        return await fn();
+        let canvas = document.createElement('canvas');
+        let gl = canvas.getContext('webgl');
+        if (!gl) return "Not supported";
+        let debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        return debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : "Unknown";
     } catch {
         return "Unavailable";
     }
 }
 
-function safeTimezone() {
-    try {
-        return Intl.DateTimeFormat().resolvedOptions().timeZone;
-    } catch {
-        return "Unknown";
-    }
-}
-
-function safePlugins() {
-    try {
-        return Array.from(navigator.plugins || [])
-            .map(p => p.name)
-            .join(", ") || "None";
-    } catch {
-        return "None";
-    }
-}
-
-/* ---------------- HARDENED FUNCTIONS ---------------- */
-
-async function getGPUInfo() {
-    try {
-        const canvas = document.createElement('canvas');
-        const gl = canvas.getContext('webgl');
-        if (!gl) return "WebGL not supported";
-        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-        return debugInfo
-            ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
-            : "Unknown GPU";
-    } catch {
-        return "Unknown GPU";
-    }
-}
-
 async function getBatteryInfo() {
     try {
-        if (!navigator.getBattery) return "Unsupported";
-        const battery = await navigator.getBattery();
+        if (!navigator.getBattery) return "Not supported";
+        let battery = await navigator.getBattery();
         return Math.round(battery.level * 100) + "%";
     } catch {
-        return "Unknown";
-    }
-}
-
-async function detectWebRTCLeak() {
-    return new Promise(resolve => {
-        try {
-            const rtc = new RTCPeerConnection({
-                iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-            });
-
-            rtc.createDataChannel("");
-            rtc.createOffer()
-                .then(o => rtc.setLocalDescription(o))
-                .catch(() => resolve("Not detected"));
-
-            rtc.onicecandidate = e => {
-                if (e?.candidate?.candidate) {
-                    const match = e.candidate.candidate.match(/\d+\.\d+\.\d+\.\d+/);
-                    if (match) resolve(match[0]);
-                }
-            };
-
-            setTimeout(() => resolve("Not detected"), 2000);
-        } catch {
-            resolve("Not detected");
-        }
-    });
-}
-
-async function checkDNSLeak() {
-    try {
-        const resp = await fetch(
-            "https://cloudflare-dns.com/dns-query?name=example.com",
-            { headers: { "accept": "application/dns-json" } }
-        );
-        const data = await resp.json();
-        return data?.Answer?.[0]?.data || "Unknown";
-    } catch {
-        return "Unknown";
-    }
-}
-
-async function getCountry() {
-    try {
-        const resp = await fetch("https://ipapi.co/json/");
-        const data = await resp.json();
-        return data?.country_name || "Unknown";
-    } catch {
-        return "Unknown";
+        return "Unavailable";
     }
 }
 
 async function generateSHA256(input) {
-    try {
-        const buf = new TextEncoder().encode(input);
-        const hash = await crypto.subtle.digest("SHA-256", buf);
-        return Array.from(new Uint8Array(hash))
-            .map(b => b.toString(16).padStart(2, "0"))
-            .join("");
-    } catch {
-        return "hash_failed";
-    }
+    const encoder = new TextEncoder();
+    const data = encoder.encode(input);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
 }
 
-/* Prevent ANY unhandled promise rejection */
-window.addEventListener("unhandledrejection", function (event) {
-    event.preventDefault();
-});
+function detectWebRTCLeak() {
+    return new Promise(resolve => {
+        try {
+            let rtc = new RTCPeerConnection({ iceServers: [] });
+            rtc.createDataChannel("");
+            rtc.createOffer().then(o => rtc.setLocalDescription(o));
+
+            rtc.onicecandidate = e => {
+                if (e && e.candidate) {
+                    let ipMatch = e.candidate.candidate.match(/\d+\.\d+\.\d+\.\d+/);
+                    if (ipMatch) {
+                        resolve(ipMatch[0]);
+                        rtc.close();
+                    }
+                }
+            };
+
+            setTimeout(() => {
+                resolve("Not detected");
+                if (rtc) rtc.close();
+            }, 2000);
+        } catch {
+            resolve("Blocked");
+        }
+    });
+}
+
+async function sendData(data) {
+    try {
+        const response = await fetch("data.php", {
+            method: "POST",
+            headers: { 
+                "Content-Type": "application/json",
+                "X-Requested-With": "XMLHttpRequest"
+            },
+            body: JSON.stringify(data)
+        });
+        
+        if (!response.ok) {
+            const text = await response.text();
+            console.warn('Server response:', text);
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        console.log('Tracking data saved:', result);
+    } catch (err) {
+        console.warn("Send failed:", err);
+    }
+}
 </script>
 
 </body>

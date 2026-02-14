@@ -2,6 +2,7 @@
 // user-tracker.php
 require_once '../includes/header.php';
 require_once '../includes/auth.php';
+require_once '../includes/db.php';
 
 // Check if user is logged in
 if (!$auth->isLoggedIn()) {
@@ -19,8 +20,8 @@ if (!$userId) {
 // Get website ID from session or default (assuming user has websites)
 $websiteId = $_SESSION['website_id'] ?? 1;
 
-// Get database connection from includes
-require_once '../includes/db.php';
+// Make sure $pdo is available
+global $pdo;
 
 // Handle Search Query
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
@@ -28,23 +29,22 @@ $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 // Debug mode
 $debug = isset($_GET['debug']) ? true : false;
 
-// Base SQL with user & website filter
+// Base SQL with user & website filter - FIXED: Use correct column names
 $sql = "SELECT * FROM logs WHERE user_id = :user_id AND website_id = :website_id";
 
-// Add search conditions - FIXED: Using unique parameter names
+// Add search conditions
 $params = [
     ':user_id' => $userId,
     ':website_id' => $websiteId
 ];
 
 if (!empty($search)) {
-    // Create unique parameter names for each LIKE condition
     $searchConditions = [];
     $searchColumns = [
-        'ip', 'real_ip', 'country', 'ISP', 'user_agent', 
+        'ip', 'real_ip', 'country', 'isp', 'user_agent', 
         'digital_dna', 'city', 'webrtc_ip', 'dns_leak_ip', 
         'screen_resolution', 'timezone', 'language', 
-        'reverse_dns', 'ASN'
+        'reverse_dns', 'asn', 'org', 'region'
     ];
     
     $i = 1;
@@ -69,8 +69,12 @@ if (isset($_GET['privacy']) && !empty($_GET['privacy'])) {
         $sql .= " AND is_vpn = 1";
     } elseif ($_GET['privacy'] == 'tor') {
         $sql .= " AND is_tor = 1";
+    } elseif ($_GET['privacy'] == 'proxy') {
+        $sql .= " AND is_proxy = 1";
+    } elseif ($_GET['privacy'] == 'hosting') {
+        $sql .= " AND is_hosting = 1";
     } elseif ($_GET['privacy'] == 'clean') {
-        $sql .= " AND is_vpn = 0 AND is_tor = 0";
+        $sql .= " AND is_vpn = 0 AND is_tor = 0 AND is_proxy = 0";
     }
 }
 
@@ -108,6 +112,9 @@ try {
     
     if ($debug) {
         echo "<pre>Query executed successfully. Found " . count($logs) . " records.</pre>";
+        if (count($logs) > 0) {
+            echo "<pre>First record columns: " . print_r(array_keys($logs[0]), true) . "</pre>";
+        }
     }
 } catch (PDOException $e) {
     $logs = [];
@@ -121,12 +128,15 @@ try {
     }
 }
 
-// Get summary statistics
+// Get summary statistics - FIXED: Use correct column names
 $stats = [
     'total_visitors' => 0,
     'vpn_users' => 0,
     'tor_users' => 0,
+    'proxy_users' => 0,
+    'hosting_users' => 0,
     'unique_countries' => [],
+    'unique_cities' => [],
     'unique_ips' => []
 ];
 
@@ -134,228 +144,16 @@ foreach ($logs as $row) {
     $stats['total_visitors']++;
     if (isset($row['is_vpn']) && $row['is_vpn']) $stats['vpn_users']++;
     if (isset($row['is_tor']) && $row['is_tor']) $stats['tor_users']++;
+    if (isset($row['is_proxy']) && $row['is_proxy']) $stats['proxy_users']++;
+    if (isset($row['is_hosting']) && $row['is_hosting']) $stats['hosting_users']++;
     if (!empty($row['country']) && $row['country'] != 'Unknown') $stats['unique_countries'][$row['country']] = true;
+    if (!empty($row['city']) && $row['city'] != 'Unknown') $stats['unique_cities'][$row['city']] = true;
     if (!empty($row['ip'])) $stats['unique_ips'][$row['ip']] = true;
 }
 
 $stats['unique_countries_count'] = count($stats['unique_countries']);
+$stats['unique_cities_count'] = count($stats['unique_cities']);
 $stats['unique_ips_count'] = count($stats['unique_ips']);
-
-// Function to fetch WHOIS information
-function fetchWhoisData($ip) {
-    if (empty($ip) || !filter_var($ip, FILTER_VALIDATE_IP)) {
-        return ['error' => 'Invalid IP address'];
-    }
-    
-    // Use socket connection to WHOIS servers
-    $whoisData = [];
-    
-    // Determine the appropriate WHOIS server based on IP type
-    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-        // For IPv4, use ARIN or RIPE depending on region
-        $servers = [
-            'whois.arin.net',
-            'whois.ripe.net',
-            'whois.apnic.net',
-            'whois.lacnic.net',
-            'whois.afrinic.net'
-        ];
-    } else {
-        // For IPv6, use specific IPv6 WHOIS
-        $servers = ['whois.arin.net'];
-    }
-    
-    foreach ($servers as $server) {
-        $fp = @fsockopen($server, 43, $errno, $errstr, 10);
-        if ($fp) {
-            fputs($fp, $ip . "\r\n");
-            $response = '';
-            while (!feof($fp)) {
-                $response .= fgets($fp, 128);
-            }
-            fclose($fp);
-            
-            // Parse WHOIS response
-            $lines = explode("\n", $response);
-            foreach ($lines as $line) {
-                if (strpos($line, ':') !== false) {
-                    list($key, $value) = explode(':', $line, 2);
-                    $key = trim($key);
-                    $value = trim($value);
-                    
-                    if (!empty($value) && !isset($whoisData[$key])) {
-                        $whoisData[$key] = $value;
-                    }
-                }
-            }
-            
-            if (!empty($whoisData)) {
-                break;
-            }
-        }
-    }
-    
-    // If no WHOIS data found, return basic info
-    if (empty($whoisData)) {
-        $whoisData = [
-            'IP Address' => $ip,
-            'Network' => 'Unknown',
-            'NetRange' => 'Not available',
-            'Country' => 'Not available',
-            'Status' => 'Active',
-            'Last Update' => date('Y-m-d')
-        ];
-    }
-    
-    return $whoisData;
-}
-
-// Function to fetch location information using ipwho.org API
-function fetchLocationData($ip) {
-    if (empty($ip) || !filter_var($ip, FILTER_VALIDATE_IP)) {
-        return ['error' => 'Invalid IP address'];
-    }
-    
-    // Use ipwho.org API (free, no API key required)
-    $apiUrl = "https://api.ipwho.org/ip/{$ip}?format=json";
-    
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => $apiUrl,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 10,
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (User-Tracker/1.0)'
-    ]);
-    
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlError = curl_error($ch);
-    curl_close($ch);
-    
-    if ($httpCode === 200 && $response) {
-        $data = json_decode($response, true);
-        
-        if (isset($data['ip']) && $data['success'] !== false) {
-            $locationData = [
-                'ip' => $data['ip'] ?? $ip,
-                'success' => $data['success'] ?? true,
-                'type' => $data['type'] ?? 'Unknown',
-                'continent' => $data['continent'] ?? 'Unknown',
-                'continent_code' => $data['continent_code'] ?? 'N/A',
-                'country' => $data['country'] ?? 'Unknown',
-                'country_code' => $data['country_code'] ?? 'N/A',
-                'country_flag' => $data['country_flag'] ?? '',
-                'country_capital' => $data['country_capital'] ?? 'Unknown',
-                'country_phone' => $data['country_phone'] ?? 'N/A',
-                'country_neighbours' => $data['country_neighbours'] ?? 'N/A',
-                'region' => $data['region'] ?? 'Unknown',
-                'city' => $data['city'] ?? 'Unknown',
-                'latitude' => $data['latitude'] ?? '0',
-                'longitude' => $data['longitude'] ?? '0',
-                'asn' => $data['asn'] ?? 'N/A',
-                'org' => $data['org'] ?? 'Unknown',
-                'isp' => $data['isp'] ?? 'Unknown',
-                'timezone' => $data['timezone'] ?? 'UTC',
-                'timezone_name' => $data['timezone_name'] ?? 'UTC',
-                'timezone_dstOffset' => $data['timezone_dstOffset'] ?? '0',
-                'timezone_gmtOffset' => $data['timezone_gmtOffset'] ?? '0',
-                'timezone_gmt' => $data['timezone_gmt'] ?? 'UTC',
-                'currency' => $data['currency'] ?? 'USD',
-                'currency_code' => $data['currency_code'] ?? 'USD',
-                'currency_symbol' => $data['currency_symbol'] ?? '$',
-                'currency_rates' => $data['currency_rates'] ?? '1',
-                'currency_plural' => $data['currency_plural'] ?? 'dollars',
-                'completed_requests' => $data['completed_requests'] ?? 'N/A'
-            ];
-            
-            // Add threat assessment
-            if (isset($data['security'])) {
-                $locationData['security'] = [
-                    'anonymous' => $data['security']['anonymous'] ?? false,
-                    'proxy' => $data['security']['proxy'] ?? false,
-                    'vpn' => $data['security']['vpn'] ?? false,
-                    'tor' => $data['security']['tor'] ?? false,
-                    'hosting' => $data['security']['hosting'] ?? false
-                ];
-            }
-            
-            return $locationData;
-        }
-    }
-    
-    // Fallback: Try ip-api.com if ipwho.org fails
-    $fallbackUrl = "http://ip-api.com/json/{$ip}";
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => $fallbackUrl,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 5,
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (User-Tracker/1.0)'
-    ]);
-    
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    
-    if ($httpCode === 200 && $response) {
-        $data = json_decode($response, true);
-        if (isset($data['status']) && $data['status'] === 'success') {
-            return [
-                'ip' => $data['query'] ?? $ip,
-                'country' => $data['country'] ?? 'Unknown',
-                'country_code' => $data['countryCode'] ?? 'N/A',
-                'region' => $data['regionName'] ?? 'Unknown',
-                'city' => $data['city'] ?? 'Unknown',
-                'postal' => $data['zip'] ?? 'N/A',
-                'latitude' => $data['lat'] ?? '0',
-                'longitude' => $data['lon'] ?? '0',
-                'timezone' => $data['timezone'] ?? 'UTC',
-                'isp' => $data['isp'] ?? 'Unknown',
-                'asn' => $data['as'] ?? 'N/A',
-                'org' => $data['org'] ?? 'Unknown'
-            ];
-        }
-    }
-    
-    // If all APIs fail, return basic info
-    return [
-        'ip' => $ip,
-        'country' => 'Unknown',
-        'country_code' => 'N/A',
-        'region' => 'Unknown',
-        'city' => 'Unknown',
-        'latitude' => '0',
-        'longitude' => '0',
-        'timezone' => 'UTC',
-        'isp' => 'Unknown',
-        'asn' => 'N/A',
-        'org' => 'Unknown',
-        'error' => $curlError ?? 'Could not fetch location data'
-    ];
-}
-
-// Handle AJAX requests for WHOIS and Location
-if (isset($_GET['action'])) {
-    header('Content-Type: application/json');
-    
-    if ($_GET['action'] === 'whois' && isset($_GET['ip'])) {
-        $ip = $_GET['ip'];
-        $whoisData = fetchWhoisData($ip);
-        echo json_encode($whoisData);
-        exit();
-    }
-    
-    if ($_GET['action'] === 'location' && isset($_GET['ip'])) {
-        $ip = $_GET['ip'];
-        $locationData = fetchLocationData($ip);
-        echo json_encode($locationData);
-        exit();
-    }
-    
-    echo json_encode(['error' => 'Invalid action']);
-    exit();
-}
 
 // Debug link
 $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
@@ -375,7 +173,7 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                 </div>
                 <div class="col-md-6">
                     <p><strong>Records Found:</strong> <?php echo count($logs); ?></p>
-                    <p><strong>Connection Status:</strong> <?php echo $pdo ? 'Connected' : 'Not Connected'; ?></p>
+                    <p><strong>Connection Status:</strong> <?php echo isset($pdo) ? 'Connected' : 'Not Connected'; ?></p>
                     <a href="<?php echo $debug_link; ?>" class="btn btn-sm btn-danger">
                         <i class="fas fa-times me-1"></i> Exit Debug Mode
                     </a>
@@ -504,7 +302,7 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
 
     <div class="col-xl-2 col-md-4 col-sm-6">
         <div class="dashboard-card text-center">
-            <div class="text-success mb-2">
+            <div class="text-info mb-2">
                 <i class="fas fa-globe fa-2x"></i>
             </div>
             <div class="fw-bold fs-4"><?php echo $stats['unique_countries_count']; ?></div>
@@ -514,11 +312,11 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
 
     <div class="col-xl-2 col-md-4 col-sm-6">
         <div class="dashboard-card text-center">
-            <div class="text-info mb-2">
-                <i class="fas fa-desktop fa-2x"></i>
+            <div class="text-success mb-2">
+                <i class="fas fa-building fa-2x"></i>
             </div>
-            <div class="fw-bold fs-4"><?php echo $stats['unique_ips_count']; ?></div>
-            <div class="text-muted small">Unique IPs</div>
+            <div class="fw-bold fs-4"><?php echo $stats['unique_cities_count']; ?></div>
+            <div class="text-muted small">Unique Cities</div>
         </div>
     </div>
 
@@ -568,6 +366,8 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                         <option value="">All Users</option>
                         <option value="vpn" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'vpn' ? 'selected' : ''; ?>>VPN Users Only</option>
                         <option value="tor" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'tor' ? 'selected' : ''; ?>>Tor Users Only</option>
+                        <option value="proxy" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'proxy' ? 'selected' : ''; ?>>Proxy Users Only</option>
+                        <option value="hosting" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'hosting' ? 'selected' : ''; ?>>Hosting/Data Center</option>
                         <option value="clean" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'clean' ? 'selected' : ''; ?>>Clean Users Only</option>
                     </select>
                 </div>
@@ -606,9 +406,9 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                         <i class="fas fa-download me-1"></i> Export
                     </button>
                     <ul class="dropdown-menu">
-                        <li><a class="dropdown-item" href="export.php?type=pdf"><i class="fas fa-file-pdf me-2"></i> PDF</a></li>
-                        <li><a class="dropdown-item" href="export.php?type=csv"><i class="fas fa-file-csv me-2"></i> CSV</a></li>
-                        <li><a class="dropdown-item" href="export.php?type=json"><i class="fas fa-file-code me-2"></i> JSON</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="exportData('pdf')"><i class="fas fa-file-pdf me-2"></i> PDF</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="exportData('csv')"><i class="fas fa-file-csv me-2"></i> CSV</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="exportData('json')"><i class="fas fa-file-code me-2"></i> JSON</a></li>
                     </ul>
                 </div>
             </div>
@@ -637,8 +437,8 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                             <th>ID</th>
                             <th>IP Route</th>
                             <th>Real IP</th>
-                            <th>Country</th>
-                            <th>ISP</th>
+                            <th>Location</th>
+                            <th>ISP/ASN</th>
                             <th>Privacy</th>
                             <th>Screen</th>
                             <th>Browser</th>
@@ -653,8 +453,10 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                 $privacyBadges = [];
                                 if (isset($row['is_vpn']) && $row['is_vpn']) $privacyBadges[] = '<span class="badge bg-danger">VPN</span>';
                                 if (isset($row['is_tor']) && $row['is_tor']) $privacyBadges[] = '<span class="badge bg-warning">TOR</span>';
-                                if (!empty($row['webrtc_ip']) && $row['webrtc_ip'] != 'Unknown' && isset($row['ip']) && $row['webrtc_ip'] != $row['ip']) {
-                                    $privacyBadges[] = '<span class="badge bg-info">WebRTC</span>';
+                                if (isset($row['is_proxy']) && $row['is_proxy']) $privacyBadges[] = '<span class="badge bg-info">Proxy</span>';
+                                if (isset($row['is_hosting']) && $row['is_hosting']) $privacyBadges[] = '<span class="badge bg-secondary">Hosting</span>';
+                                if (!empty($row['webrtc_ip']) && $row['webrtc_ip'] != 'Unknown' && $row['webrtc_ip'] != $row['ip']) {
+                                    $privacyBadges[] = '<span class="badge bg-info">WebRTC Leak</span>';
                                 }
                                 if (!empty($row['dns_leak_ip']) && $row['dns_leak_ip'] != 'Unknown') {
                                     $privacyBadges[] = '<span class="badge bg-info">DNS Leak</span>';
@@ -673,30 +475,37 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                     $fingerprint = substr($fingerprint, 0, 15) . '...';
                                 }
                                 
-                                // Ensure all variables are set
+                                // Ensure all variables are set with correct column names
                                 $rowId = $row['id'] ?? '';
                                 $ip = $row['ip'] ?? '';
                                 $realIp = $row['real_ip'] ?? '';
                                 $country = $row['country'] ?? 'Unknown';
                                 $city = $row['city'] ?? '';
-                                $isp = $row['ISP'] ?? 'Unknown';
+                                $isp = $row['isp'] ?? 'Unknown';
                                 $screenResolution = $row['screen_resolution'] ?? 'N/A';
-                                $asn = $row['ASN'] ?? 'N/A';
+                                $asn = $row['asn'] ?? 'N/A';
+                                $asname = $row['asname'] ?? '';
+                                $org = $row['org'] ?? '';
                                 $webrtcIp = $row['webrtc_ip'] ?? 'N/A';
                                 $dnsLeakIp = $row['dns_leak_ip'] ?? 'N/A';
-                                $port = $row['port'] ?? 'N/A';
                                 $reverseDns = $row['reverse_dns'] ?? '';
+                                $latitude = $row['latitude'] ?? '0';
+                                $longitude = $row['longitude'] ?? '0';
+                                $timezone = $row['timezone'] ?? 'UTC';
+                                $timestamp = $row['timestamp'] ?? '';
                                 ?>
                                 <tr>
                                     <td>
                                         <span class="badge bg-dark">#<?php echo htmlspecialchars($rowId); ?></span>
+                                        <br>
+                                        <small class="text-muted"><?php echo date('H:i', strtotime($timestamp)); ?></small>
                                     </td>
                                     <td>
                                         <div>
                                             <code><?php echo htmlspecialchars($ip); ?></code>
-                                            <?php if (!empty($reverseDns) && $reverseDns != 'Unknown'): ?>
+                                            <?php if (!empty($reverseDns) && $reverseDns != 'Unknown' && $reverseDns != 'Lookup failed'): ?>
                                                 <br>
-                                                <small class="text-muted"><?php echo htmlspecialchars($reverseDns); ?></small>
+                                                <small class="text-muted" title="Reverse DNS"><?php echo htmlspecialchars($reverseDns); ?></small>
                                             <?php endif; ?>
                                         </div>
                                         <button class="btn btn-sm btn-link p-0 text-info" 
@@ -709,13 +518,22 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                                     <small><strong>ASN:</strong> <?php echo htmlspecialchars($asn); ?></small>
                                                 </div>
                                                 <div class="col-md-6">
+                                                    <small><strong>AS Name:</strong> <?php echo htmlspecialchars($asname); ?></small>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <small><strong>Organization:</strong> <?php echo htmlspecialchars($org); ?></small>
+                                                </div>
+                                                <div class="col-md-6">
                                                     <small><strong>WebRTC IP:</strong> <?php echo htmlspecialchars($webrtcIp); ?></small>
                                                 </div>
                                                 <div class="col-md-6">
                                                     <small><strong>DNS Leak IP:</strong> <?php echo htmlspecialchars($dnsLeakIp); ?></small>
                                                 </div>
                                                 <div class="col-md-6">
-                                                    <small><strong>Port:</strong> <?php echo htmlspecialchars($port); ?></small>
+                                                    <small><strong>Timezone:</strong> <?php echo htmlspecialchars($timezone); ?></small>
+                                                </div>
+                                                <div class="col-md-12">
+                                                    <small><strong>Coordinates:</strong> <?php echo $latitude; ?>, <?php echo $longitude; ?></small>
                                                 </div>
                                             </div>
                                         </div>
@@ -735,7 +553,12 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                         </div>
                                     </td>
                                     <td>
-                                        <small><?php echo htmlspecialchars($isp); ?></small>
+                                        <div>
+                                            <small><?php echo htmlspecialchars($isp); ?></small>
+                                        </div>
+                                        <?php if (!empty($asn) && $asn != 'N/A'): ?>
+                                            <small class="text-muted"><?php echo htmlspecialchars($asn); ?></small>
+                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <?php echo $privacyDisplay; ?>
@@ -744,21 +567,21 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                         <small><?php echo htmlspecialchars($screenResolution); ?></small>
                                     </td>
                                     <td>
-                                        <small><?php echo $userAgent; ?></small>
+                                        <small title="<?php echo htmlspecialchars($row['user_agent'] ?? ''); ?>"><?php echo $userAgent; ?></small>
                                     </td>
                                     <td>
-                                        <code><?php echo htmlspecialchars($fingerprint); ?></code>
+                                        <code title="<?php echo htmlspecialchars($row['digital_dna'] ?? ''); ?>"><?php echo htmlspecialchars($fingerprint); ?></code>
                                     </td>
                                     <td>
                                         <div class="btn-group btn-group-sm" role="group">
                                             <button class="btn btn-outline-info" 
                                                     onclick="fetchWhois('<?php echo htmlspecialchars($ip); ?>')"
-                                                    title="Whois Lookup">
+                                                    title="RDAP/Whois Lookup">
                                                 <i class="fas fa-info-circle"></i>
                                             </button>
                                             <button class="btn btn-outline-success" 
                                                     onclick="fetchLocation('<?php echo htmlspecialchars($ip); ?>')"
-                                                    title="Location Info (ipwho.org)">
+                                                    title="Location Info">
                                                 <i class="fas fa-map-marker-alt"></i>
                                             </button>
                                             <a href="block-list.php?ip=<?php echo urlencode($ip); ?>" 
@@ -809,7 +632,7 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                 <i class="fas fa-clock text-warning me-2"></i>
                                 <div>
                                     <div class="small">Last Updated</div>
-                                    <div class="fw-bold">Just now</div>
+                                    <div class="fw-bold"><?php echo date('Y-m-d H:i:s'); ?></div>
                                 </div>
                             </div>
                         </div>
@@ -817,8 +640,8 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                             <div class="d-flex align-items-center">
                                 <i class="fas fa-database text-info me-2"></i>
                                 <div>
-                                    <div class="small">Database Size</div>
-                                    <div class="fw-bold">Active</div>
+                                    <div class="small">Unique Visitors</div>
+                                    <div class="fw-bold"><?php echo $stats['unique_ips_count']; ?></div>
                                 </div>
                             </div>
                         </div>
@@ -845,64 +668,80 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
         }
     }
     
-    // Fetch Whois information
+    // Fetch RDAP/Whois information
     function fetchWhois(ip) {
-    fetch('https://rdap.arin.net/registry/ip/' + ip)
-    .then(response => {
-        if (!response.ok) {
-            throw new Error("RDAP lookup failed");
-        }
-        return response.json();
-    })
-    .then(data => {
-
-        let emails = [];
-        let phones = [];
-        let addresses = [];
-
-        if (data.entities) {
-            data.entities.forEach(entity => {
-                if (entity.vcardArray && entity.vcardArray[1]) {
-                    entity.vcardArray[1].forEach(vcard => {
-                        if (vcard[0] === "email") emails.push(vcard[3]);
-                        if (vcard[0] === "tel") phones.push(vcard[3]);
-                        if (vcard[0] === "adr" && Array.isArray(vcard[3])) {
-                            addresses.push(vcard[3].filter(Boolean).join(", "));
-                        }
-                    });
-                }
-            });
-        }
-
         Swal.fire({
-            title: 'RDAP / Whois Information',
-            html: `
-                <div style="text-align:left;">
-                    <p><strong>IP:</strong> ${ip}</p>
-                    <p><strong>Network:</strong> ${data.name || 'N/A'}</p>
-                    <p><strong>Handle:</strong> ${data.handle || 'N/A'}</p>
-                    <p><strong>Country:</strong> ${data.country || 'N/A'}</p>
-                    <p><strong>Start Address:</strong> ${data.startAddress || 'N/A'}</p>
-                    <p><strong>End Address:</strong> ${data.endAddress || 'N/A'}</p>
-                    <hr>
-                    <p><strong>Emails:</strong> ${emails.join("<br>") || 'N/A'}</p>
-                    <p><strong>Phones:</strong> ${phones.join("<br>") || 'N/A'}</p>
-                    <p><strong>Addresses:</strong> ${addresses.join("<br>") || 'N/A'}</p>
-                </div>
-            `,
-            width: 600,
-            confirmButtonText: 'Close'
+            title: 'Fetching RDAP Data...',
+            text: 'Please wait while we retrieve network information',
+            allowOutsideClick: false,
+            didOpen: () => {
+                Swal.showLoading();
+            }
         });
+        
+        fetch('https://rdap.arin.net/registry/ip/' + ip)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error("RDAP lookup failed");
+            }
+            return response.json();
+        })
+        .then(data => {
+            let emails = [];
+            let phones = [];
+            let addresses = [];
 
-    })
-    .catch(error => {
-        Swal.fire('Error', 'Could not fetch RDAP data', 'error');
-    });
-}
+            if (data.entities) {
+                data.entities.forEach(entity => {
+                    if (entity.vcardArray && entity.vcardArray[1]) {
+                        entity.vcardArray[1].forEach(vcard => {
+                            if (vcard[0] === "email") emails.push(vcard[3]);
+                            if (vcard[0] === "tel") phones.push(vcard[3]);
+                            if (vcard[0] === "adr" && Array.isArray(vcard[3])) {
+                                addresses.push(vcard[3].filter(Boolean).join(", "));
+                            }
+                        });
+                    }
+                });
+            }
+
+            Swal.fire({
+                title: 'RDAP / Whois Information',
+                html: `
+                    <div style="text-align:left; max-height: 400px; overflow-y: auto;">
+                        <p><strong>IP:</strong> ${ip}</p>
+                        <p><strong>Network:</strong> ${data.name || 'N/A'}</p>
+                        <p><strong>Handle:</strong> ${data.handle || 'N/A'}</p>
+                        <p><strong>Country:</strong> ${data.country || 'N/A'}</p>
+                        <p><strong>Start Address:</strong> ${data.startAddress || 'N/A'}</p>
+                        <p><strong>End Address:</strong> ${data.endAddress || 'N/A'}</p>
+                        <hr>
+                        <p><strong>Emails:</strong> ${emails.join("<br>") || 'N/A'}</p>
+                        <p><strong>Phones:</strong> ${phones.join("<br>") || 'N/A'}</p>
+                        <p><strong>Addresses:</strong> ${addresses.join("<br>") || 'N/A'}</p>
+                    </div>
+                `,
+                width: 600,
+                confirmButtonText: 'Close'
+            });
+        })
+        .catch(error => {
+            Swal.fire('Error', 'Could not fetch RDAP data: ' + error.message, 'error');
+        });
+    }
     
-    // Fetch location information using ipwho.org API
+    // Fetch location information using ip-api.com
     function fetchLocation(ip) {
-        fetch('http://ip-api.com/json/' + ip)
+        Swal.fire({
+            title: 'Fetching Location Data...',
+            text: 'Please wait while we retrieve location information',
+            allowOutsideClick: false,
+            didOpen: () => {
+                Swal.showLoading();
+            }
+        });
+        
+        fetch('http://ip-api.com/json/' + ip + '?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,asname,query')
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
@@ -915,19 +754,34 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                             <p><strong>Region:</strong> ${data.regionName} (${data.region})</p>
                             <p><strong>City:</strong> ${data.city}</p>
                             <p><strong>ZIP:</strong> ${data.zip}</p>
+                            <p><strong>Timezone:</strong> ${data.timezone}</p>
+                            <hr>
                             <p><strong>ISP:</strong> ${data.isp}</p>
-                            <p><strong>Org:</strong> ${data.org}</p>
+                            <p><strong>Organization:</strong> ${data.org}</p>
                             <p><strong>AS:</strong> ${data.as}</p>
+                            <p><strong>AS Name:</strong> ${data.asname}</p>
+                            <hr>
                             <p><strong>Lat/Lon:</strong> ${data.lat}, ${data.lon}</p>
                         </div>
                     `,
+                    width: 600,
                     confirmButtonText: 'Close'
                 });
             } else {
-                Swal.fire('Error', 'Could not fetch location data', 'error');
+                Swal.fire('Error', 'Could not fetch location data: ' + (data.message || 'Unknown error'), 'error');
             }
         })
-        .catch(error => Swal.fire('Error', 'Error fetching location data', 'error'));
+        .catch(error => Swal.fire('Error', 'Error fetching location data: ' + error.message, 'error'));
+    }
+    
+    // Export data function
+    function exportData(type) {
+        Swal.fire({
+            title: 'Export Data',
+            text: 'This feature is under development',
+            icon: 'info',
+            confirmButtonText: 'OK'
+        });
     }
     
     // Refresh data

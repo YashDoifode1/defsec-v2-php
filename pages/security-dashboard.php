@@ -237,7 +237,7 @@ try {
     $websites = [];
 }
 
-// Prepare GeoJSON data for map (integrated, no AJAX needed)
+// Prepare GeoJSON data for map
 $visitorFeatures = [];
 $attackFeatures = [];
 $countryList = [];
@@ -303,7 +303,7 @@ foreach ($attackLocations as $attack) {
                 'country' => $country,
                 'attack_type' => $attack['attack_type'],
                 'severity' => $attack['severity'],
-                'count' => $attack['attack_count'],
+                'count' => (int)$attack['attack_count'],
                 'timestamp' => date('Y-m-d H:i', strtotime($attack['timestamp'])),
                 'request_url' => $attack['request_url'] ?? '',
                 'color' => $severityColor,
@@ -559,19 +559,19 @@ $current_page = basename($_SERVER['PHP_SELF']);
             padding: 20px;
         }
         
-        /* MAP AREA - Keep original light styling */
+        /* MAP AREA - Enhanced styling */
         #securityMap {
-            height: 400px;
+            height: 500px;
             width: 100%;
             border-radius: 8px;
             margin-bottom: 1rem;
             z-index: 1;
-            background-color: #f8f9fa !important; /* Keep map light */
+            background-color: #1a1a1a !important;
         }
         
         .map-container {
             position: relative;
-            background-color: #1e1e1e; /* Dark background around map */
+            background-color: #1e1e1e;
             padding: 15px;
             border-radius: 10px;
             border: 1px solid #343a40;
@@ -579,64 +579,159 @@ $current_page = basename($_SERVER['PHP_SELF']);
         
         .map-legend {
             position: absolute;
-            bottom: 20px;
-            right: 20px;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 10px;
-            border-radius: 5px;
+            bottom: 30px;
+            right: 30px;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 15px;
+            border-radius: 8px;
             z-index: 1000;
             font-size: 12px;
             color: white;
+            border: 1px solid #444;
+            backdrop-filter: blur(5px);
+            min-width: 180px;
+        }
+        
+        .map-legend h6 {
+            margin-bottom: 10px;
+            color: #fff;
+            border-bottom: 1px solid #444;
+            padding-bottom: 5px;
         }
         
         .map-legend-item {
             display: flex;
             align-items: center;
-            margin-bottom: 5px;
+            margin-bottom: 8px;
         }
         
         .map-legend-color {
-            width: 15px;
-            height: 15px;
-            margin-right: 5px;
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
             border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.3);
+        }
+        
+        .map-legend-color.square {
+            border-radius: 4px;
         }
         
         .attack-marker {
-            filter: drop-shadow(0 0 2px rgba(0,0,0,0.5));
+            filter: drop-shadow(0 0 5px rgba(0,0,0,0.5));
+            transition: all 0.3s ease;
+        }
+        
+        .attack-marker:hover {
+            transform: scale(1.2);
+            z-index: 1000;
+            filter: drop-shadow(0 0 10px currentColor);
         }
         
         .map-controls {
             position: absolute;
-            top: 10px;
-            right: 10px;
+            top: 30px;
+            right: 30px;
             z-index: 1000;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 8px;
-            border-radius: 5px;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            backdrop-filter: blur(5px);
+            min-width: 150px;
+        }
+        
+        .map-controls .form-check {
+            margin-bottom: 8px;
+        }
+        
+        .map-controls .form-check:last-child {
+            margin-bottom: 0;
         }
         
         .map-tooltip {
-            font-family: monospace;
-            font-size: 12px;
-            background-color: white !important;
-            color: black !important;
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 13px;
         }
         
         .map-stats {
             position: absolute;
-            top: 10px;
-            left: 10px;
+            top: 30px;
+            left: 30px;
             z-index: 1000;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 8px;
-            border-radius: 5px;
-            font-size: 12px;
-            max-width: 200px;
-            color: white;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 12px 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            min-width: 200px;
+            border: 1px solid #444;
+            backdrop-filter: blur(5px);
         }
         
-        /* Modal dark mode */
+        .map-stats div {
+            margin-bottom: 5px;
+        }
+        
+        .map-stats div:last-child {
+            margin-bottom: 0;
+        }
+        
+        /* Custom popup styling */
+        .custom-popup .leaflet-popup-content-wrapper {
+            background: rgba(30, 30, 30, 0.95);
+            color: #fff;
+            border-radius: 8px;
+            border: 1px solid #444;
+            backdrop-filter: blur(5px);
+        }
+        
+        .custom-popup .leaflet-popup-tip {
+            background: rgba(30, 30, 30, 0.95);
+            border: 1px solid #444;
+        }
+        
+        .custom-popup .leaflet-popup-content {
+            margin: 15px;
+            line-height: 1.5;
+        }
+        
+        /* Cluster styling */
+        .cluster-marker {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: white;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+            transition: all 0.3s ease;
+        }
+        
+        .cluster-marker:hover {
+            transform: scale(1.1);
+        }
+        
+        /* Marker animations */
+        @keyframes pulse-attack {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.9; box-shadow: 0 0 20px currentColor; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        
+        @keyframes pulse-vpn {
+            0% { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(255, 193, 7, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0); }
+        }
+        
+        .vpn-marker {
+            animation: pulse-vpn 2s infinite;
+        }
+        
+        .attack-marker {
+            animation: pulse-attack 2s infinite;
+        }
+        
+        /* Modal dark mode enhancements */
         .modal-content.bg-dark {
             background-color: #1e1e1e !important;
             border: 1px solid #343a40;
@@ -652,6 +747,30 @@ $current_page = basename($_SERVER['PHP_SELF']);
         
         .btn-close-white {
             filter: invert(1) grayscale(100%) brightness(200%);
+        }
+        
+        #modalMap {
+            height: 300px;
+            width: 100%;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border: 1px solid #444;
+        }
+        
+        .info-label {
+            color: #adb5bd;
+            font-size: 0.85rem;
+            margin-bottom: 2px;
+        }
+        
+        .info-value {
+            background: #2d2d2d;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            margin-bottom: 10px;
+            font-family: monospace;
+            word-break: break-all;
         }
         
         /* Dropdown dark mode */
@@ -674,32 +793,18 @@ $current_page = basename($_SERVER['PHP_SELF']);
             color: white;
         }
         
-        /* Badges in dark mode */
+        /* Badges */
         .badge.bg-dark {
             background-color: #343a40 !important;
         }
         
-        .badge.bg-secondary {
-            background-color: #6c757d !important;
+        /* Progress bar */
+        .progress {
+            background-color: #2d2d2d;
+            height: 6px;
         }
         
-        /* Form controls in dark mode */
-        .form-control.bg-dark {
-            background-color: #2d2d2d !important;
-            border-color: #495057;
-            color: #e9ecef;
-        }
-        
-        .form-check-label.text-white {
-            color: #ffffff !important;
-        }
-        
-        /* Text colors */
-        .text-muted {
-            color: #6c757d !important;
-        }
-        
-        /* Alert in dark mode */
+        /* Alert styling */
         .alert {
             background-color: rgba(255, 255, 255, 0.05);
             border-color: rgba(255, 255, 255, 0.1);
@@ -722,19 +827,6 @@ $current_page = basename($_SERVER['PHP_SELF']);
             background-color: rgba(13, 202, 240, 0.1);
             border-color: rgba(13, 202, 240, 0.2);
             color: #0dcaf0;
-        }
-        
-        /* Progress bar in dark mode */
-        .progress {
-            background-color: #2d2d2d;
-        }
-        
-        /* Code elements */
-        code {
-            background-color: #2d2d2d;
-            color: #e83e8c;
-            padding: 2px 4px;
-            border-radius: 3px;
         }
     </style>
 </head>
@@ -781,7 +873,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
                         <i class="fas fa-archive"></i> Export logs
                     </a>
                 </li>
-                  <li class="nav-item">
+                <li class="nav-item">
                     <a class="nav-link" href="<?php echo APP_URL; ?>/pages/user-tracker.php">
                         <i class="fas fa-user-secret"></i> User Tracker
                     </a>
@@ -878,7 +970,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
                 <div class="col-12">
                     <div class="dashboard-card">
                         <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h5 class="mb-0"><i class="fas fa-map-marked-alt me-2"></i>Security Threat Map</h5>
+                            <h5 class="mb-0"><i class="fas fa-map-marked-alt me-2 text-primary"></i>Global Threat Intelligence Map</h5>
                             <div>
                                 <button class="btn btn-sm btn-outline-secondary" onclick="resetMapView()">
                                     <i class="fas fa-sync-alt"></i> Reset View
@@ -896,51 +988,71 @@ $current_page = basename($_SERVER['PHP_SELF']);
                             <div id="securityMap"></div>
                             
                             <div class="map-stats">
+                                <h6 class="mb-2"><i class="fas fa-chart-simple me-1"></i> Live Statistics</h6>
                                 <div class="d-flex justify-content-between">
-                                    <small class="text-muted">Visitors:</small>
-                                    <small><span class="text-success"><?php echo count($visitorFeatures); ?></span></small>
+                                    <small class="text-muted"><i class="fas fa-user me-1"></i> Visitors:</small>
+                                    <small><span class="text-success fw-bold"><?php echo count($visitorFeatures); ?></span></small>
                                 </div>
                                 <div class="d-flex justify-content-between">
-                                    <small class="text-muted">Attacks:</small>
-                                    <small><span class="text-danger"><?php echo count($attackFeatures); ?></span></small>
+                                    <small class="text-muted"><i class="fas fa-bug me-1"></i> Attacks:</small>
+                                    <small><span class="text-danger fw-bold"><?php echo count($attackFeatures); ?></span></small>
                                 </div>
                                 <div class="d-flex justify-content-between">
-                                    <small class="text-muted">Countries:</small>
-                                    <small><span class="text-info"><?php echo count($uniqueCountries); ?></span></small>
+                                    <small class="text-muted"><i class="fas fa-flag me-1"></i> Countries:</small>
+                                    <small><span class="text-info fw-bold"><?php echo count($uniqueCountries); ?></span></small>
                                 </div>
                                 <div class="d-flex justify-content-between">
-                                    <small class="text-muted">Updated:</small>
+                                    <small class="text-muted"><i class="fas fa-clock me-1"></i> Updated:</small>
                                     <small><?php echo date('H:i:s'); ?></small>
+                                </div>
+                                <hr class="my-2 opacity-25">
+                                <div class="d-flex justify-content-between">
+                                    <small class="text-muted"><i class="fas fa-shield me-1"></i> Protected:</small>
+                                    <small><span class="text-success">Active</span></small>
                                 </div>
                             </div>
                             
                             <div class="map-controls">
+                                <h6 class="mb-2"><i class="fas fa-sliders me-1"></i> Layer Controls</h6>
                                 <div class="form-check form-switch">
                                     <input class="form-check-input" type="checkbox" id="showVisitors" checked>
-                                    <label class="form-check-label text-white" for="showVisitors">Visitors</label>
+                                    <label class="form-check-label text-white" for="showVisitors">
+                                        <i class="fas fa-user text-success me-1"></i> Visitors
+                                    </label>
                                 </div>
                                 <div class="form-check form-switch">
                                     <input class="form-check-input" type="checkbox" id="showAttacks" checked>
-                                    <label class="form-check-label text-white" for="showAttacks">Attacks</label>
+                                    <label class="form-check-label text-white" for="showAttacks">
+                                        <i class="fas fa-bug text-danger me-1"></i> Attacks
+                                    </label>
                                 </div>
                                 <div class="form-check form-switch">
                                     <input class="form-check-input" type="checkbox" id="clusterMarkers" checked>
-                                    <label class="form-check-label text-white" for="clusterMarkers">Cluster</label>
+                                    <label class="form-check-label text-white" for="clusterMarkers">
+                                        <i class="fas fa-layer-group me-1"></i> Cluster Markers
+                                    </label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="heatmap" disabled>
+                                    <label class="form-check-label text-white text-muted" for="heatmap">
+                                        <i class="fas fa-fire me-1"></i> Heatmap (Soon)
+                                    </label>
                                 </div>
                             </div>
                             
                             <div class="map-legend">
+                                <h6><i class="fas fa-palette me-1"></i> Legend</h6>
                                 <div class="map-legend-item">
                                     <div class="map-legend-color" style="background-color: #28a745;"></div>
-                                    <span>Normal Visitors</span>
+                                    <span>Normal Visitor</span>
                                 </div>
                                 <div class="map-legend-item">
-                                    <div class="map-legend-color" style="background-color: #6c757d;"></div>
-                                    <span>VPN/Proxy</span>
+                                    <div class="map-legend-color" style="background-color: #6c757d; border-color: #ffc107;"></div>
+                                    <span>VPN/Proxy User</span>
                                 </div>
                                 <div class="map-legend-item">
                                     <div class="map-legend-color" style="background-color: #dc3545;"></div>
-                                    <span>Critical Attacks</span>
+                                    <span>Critical Attack</span>
                                 </div>
                                 <div class="map-legend-item">
                                     <div class="map-legend-color" style="background-color: #fd7e14;"></div>
@@ -949,6 +1061,10 @@ $current_page = basename($_SERVER['PHP_SELF']);
                                 <div class="map-legend-item">
                                     <div class="map-legend-color" style="background-color: #ffc107;"></div>
                                     <span>Medium Severity</span>
+                                </div>
+                                <div class="map-legend-item">
+                                    <div class="map-legend-color" style="background-color: #0dcaf0;"></div>
+                                    <span>Info/Low Severity</span>
                                 </div>
                             </div>
                         </div>
@@ -1039,7 +1155,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
                 <div class="col-xl-8">
                     <div class="dashboard-card">
                         <div class="d-flex justify-content-between align-items-center mb-4">
-                            <h5 class="mb-0"><i class="fas fa-history me-2"></i>Recent Attacks</h5>
+                            <h5 class="mb-0"><i class="fas fa-history me-2 text-warning"></i>Recent Attacks</h5>
                             <a href="web-security.php?website_id=<?php echo $website_id; ?>" class="btn btn-sm btn-outline-primary">
                                 <i class="fas fa-external-link-alt me-1"></i> View All
                             </a>
@@ -1145,7 +1261,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
 
                 <div class="col-xl-4">
                     <div class="dashboard-card">
-                        <h5 class="mb-4"><i class="fas fa-flag me-2"></i>Top Attacking Countries</h5>
+                        <h5 class="mb-4"><i class="fas fa-flag me-2 text-danger"></i>Top Attacking Countries</h5>
                         
                         <?php if (!empty($countryData)): ?>
                             <div class="mb-4">
@@ -1172,8 +1288,8 @@ $current_page = basename($_SERVER['PHP_SELF']);
                             </div>
                         <?php endif; ?>
                         
-                        <div class="mt-4 pt-3 border-top">
-                            <h6 class="mb-3"><i class="fas fa-bolt me-2"></i>Quick Actions</h6>
+                        <div class="mt-4 pt-3 border-top border-secondary">
+                            <h6 class="mb-3"><i class="fas fa-bolt me-2 text-warning"></i>Quick Actions</h6>
                             <div class="d-grid gap-2">
                                 <a href="geolocation.php?website_id=<?php echo $website_id; ?>" class="btn btn-outline-primary text-start">
                                     <i class="fas fa-map me-2"></i> Detailed Geolocation
@@ -1197,50 +1313,45 @@ $current_page = basename($_SERVER['PHP_SELF']);
         <div class="modal-dialog modal-lg">
             <div class="modal-content bg-dark">
                 <div class="modal-header border-secondary">
-                    <h5 class="modal-title">IP Location Details</h5>
+                    <h5 class="modal-title">
+                        <i class="fas fa-map-pin me-2 text-info"></i>
+                        IP Location Details
+                    </h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
                     <div id="modalMap" style="height: 300px; width: 100%; border-radius: 5px; margin-bottom: 15px;"></div>
                     <div class="row">
                         <div class="col-md-6">
-                            <div class="mb-3">
-                                <label class="form-label text-muted">IP Address</label>
-                                <div class="form-control bg-dark text-light" id="modalIp"></div>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label text-muted">Country</label>
-                                <div class="form-control bg-dark text-light" id="modalCountry"></div>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label text-muted">Coordinates</label>
-                                <div class="form-control bg-dark text-light" id="modalCoords"></div>
-                            </div>
+                            <div class="info-label"><i class="fas fa-ip me-1"></i> IP Address</div>
+                            <div class="info-value" id="modalIp"></div>
+                            
+                            <div class="info-label"><i class="fas fa-flag me-1"></i> Country</div>
+                            <div class="info-value" id="modalCountry"></div>
+                            
+                            <div class="info-label"><i class="fas fa-map-marker-alt me-1"></i> Coordinates</div>
+                            <div class="info-value" id="modalCoords"></div>
                         </div>
                         <div class="col-md-6">
-                            <div class="mb-3">
-                                <label class="form-label text-muted">Last Seen</label>
-                                <div class="form-control bg-dark text-light" id="modalLastSeen"></div>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label text-muted">ISP / ASN</label>
-                                <div class="form-control bg-dark text-light" id="modalISP"></div>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label text-muted">Fingerprint</label>
-                                <div class="form-control bg-dark text-light" id="modalFingerprint"></div>
-                            </div>
+                            <div class="info-label"><i class="fas fa-clock me-1"></i> Last Seen</div>
+                            <div class="info-value" id="modalLastSeen"></div>
+                            
+                            <div class="info-label"><i class="fas fa-network-wired me-1"></i> ISP / ASN</div>
+                            <div class="info-value" id="modalISP"></div>
+                            
+                            <div class="info-label"><i class="fas fa-fingerprint me-1"></i> Fingerprint</div>
+                            <div class="info-value" id="modalFingerprint"></div>
                         </div>
                     </div>
-                    <div id="modalAttackDetails"></div>
+                    <div id="modalAttackDetails" class="mt-3"></div>
                 </div>
                 <div class="modal-footer border-secondary">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <a href="#" class="btn btn-danger" id="modalBlockBtn">
-                        <i class="fas fa-ban me-1"></i> Block This IP
+                    <a href="#" class="btn btn-danger" id="modalBlockBtn" target="_blank">
+                        <i class="fas fa-ban me-1"></i> Block IP
                     </a>
                     <a href="#" class="btn btn-info" id="modalWhoisBtn" target="_blank">
-                        <i class="fas fa-search me-1"></i> WHOIS Lookup
+                        <i class="fas fa-search me-1"></i> WHOIS
                     </a>
                     <a href="#" class="btn btn-warning" id="modalIPDetailsBtn" target="_blank">
                         <i class="fas fa-info-circle me-1"></i> IP Details
@@ -1264,27 +1375,53 @@ $current_page = basename($_SERVER['PHP_SELF']);
     let markerCluster;
     let modalMap = null;
 
-    // GeoJSON data from PHP (now embedded directly)
+    // GeoJSON data from PHP
     const geoJsonData = <?php echo json_encode($geoJsonData, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT); ?>;
 
     // Initialize map
     function initMap() {
-        // Create map centered on world
-        map = L.map('securityMap').setView([20, 0], 2);
+        // Create map centered on world with dark theme
+        map = L.map('securityMap', {
+            center: [20, 0],
+            zoom: 2,
+            zoomControl: true,
+            fadeAnimation: true,
+            markerZoomAnimation: true
+        });
         
-        // Add OpenStreetMap tiles
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-            maxZoom: 18
+        // Add CartoDB dark theme tiles for better contrast
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; CartoDB',
+            maxZoom: 18,
+            subdomains: 'abcd'
         }).addTo(map);
         
-        // Create marker cluster group
+        // Add zoom control to bottom right
+        map.zoomControl.setPosition('bottomright');
+        
+        // Create marker cluster group with custom styling
         markerCluster = L.markerClusterGroup({
             chunkedLoading: true,
             showCoverageOnHover: false,
-            maxClusterRadius: 40,
+            maxClusterRadius: 60,
             spiderfyOnMaxZoom: true,
-            disableClusteringAtZoom: 8
+            disableClusteringAtZoom: 10,
+            iconCreateFunction: function(cluster) {
+                const markers = cluster.getAllChildMarkers();
+                const attackCount = markers.filter(m => 
+                    m.getPopup()?.getContent()?.toLowerCase().includes('attack')
+                ).length;
+                
+                const totalCount = cluster.getChildCount();
+                const color = attackCount > totalCount / 2 ? '#dc3545' : 
+                             (attackCount > 0 ? '#fd7e14' : '#28a745');
+                
+                return L.divIcon({
+                    html: `<div style="background-color: ${color}; width: 45px; height: 45px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; border: 3px solid white; box-shadow: 0 0 15px rgba(0,0,0,0.7); background: radial-gradient(circle at 30% 30%, ${color}dd, ${color});">${totalCount}</div>`,
+                    className: 'cluster-marker',
+                    iconSize: [45, 45]
+                });
+            }
         });
         
         // Create separate layers
@@ -1298,7 +1435,16 @@ $current_page = basename($_SERVER['PHP_SELF']);
         map.addLayer(markerCluster);
         
         // Add scale
-        L.control.scale().addTo(map);
+        L.control.scale({
+            imperial: false,
+            metric: true,
+            position: 'bottomleft'
+        }).addTo(map);
+        
+        // Force a map resize after initialization
+        setTimeout(() => {
+            map.invalidateSize();
+        }, 200);
     }
 
     // Function to add markers to layers
@@ -1315,52 +1461,93 @@ $current_page = basename($_SERVER['PHP_SELF']);
             let markerColor, markerIcon, markerSize;
             
             if (props.type === 'visitor') {
-                // Visitor marker - green for normal, gray for VPN/Proxy
-                markerColor = props.vpn || props.proxy ? '#6c757d' : '#28a745';
-                markerIcon = L.divIcon({
-                    className: 'attack-marker',
-                    html: `<div style="background-color: ${markerColor}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
-                    iconSize: [16, 16],
-                    iconAnchor: [8, 8]
-                });
+                // Visitor marker - color based on VPN/Proxy status
+                if (props.vpn || props.proxy) {
+                    markerColor = '#6c757d'; // Gray for VPN/Proxy
+                    markerIcon = L.divIcon({
+                        className: 'visitor-marker vpn-marker',
+                        html: `<div style="background-color: ${markerColor}; width: 18px; height: 18px; border-radius: 50%; border: 3px solid #ffc107; box-shadow: 0 0 15px rgba(255,193,7,0.7);"></div>`,
+                        iconSize: [24, 24],
+                        iconAnchor: [12, 12]
+                    });
+                } else {
+                    markerColor = '#28a745'; // Green for normal visitors
+                    markerIcon = L.divIcon({
+                        className: 'visitor-marker',
+                        html: `<div style="background-color: ${markerColor}; width: 16px; height: 16px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px ${markerColor};"></div>`,
+                        iconSize: [20, 20],
+                        iconAnchor: [10, 10]
+                    });
+                }
             } else {
-                // Attack marker - color based on severity
-                markerColor = props.color;
-                markerSize = Math.min(20, Math.max(10, 10 + (props.count || 1)));
+                // Attack marker - color based on severity with size based on count
+                switch(props.severity?.toLowerCase()) {
+                    case 'critical':
+                        markerColor = '#dc3545'; // Red
+                        break;
+                    case 'high':
+                        markerColor = '#fd7e14'; // Orange
+                        break;
+                    case 'medium':
+                        markerColor = '#ffc107'; // Yellow
+                        break;
+                    case 'info':
+                    default:
+                        markerColor = '#0dcaf0'; // Blue
+                        break;
+                }
+                
+                // Size based on attack count (min 18px, max 40px)
+                markerSize = Math.min(40, Math.max(18, 12 + (props.count || 1) * 3));
+                
                 markerIcon = L.divIcon({
                     className: 'attack-marker',
-                    html: `<div style="background-color: ${markerColor}; width: ${markerSize}px; height: ${markerSize}px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px ${markerColor};"></div>`,
-                    iconSize: [markerSize + 4, markerSize + 4],
-                    iconAnchor: [(markerSize + 4) / 2, (markerSize + 4) / 2]
+                    html: `<div style="background-color: ${markerColor}; width: ${markerSize}px; height: ${markerSize}px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 20px ${markerColor}; background: radial-gradient(circle at 30% 30%, ${markerColor}dd, ${markerColor});"></div>`,
+                    iconSize: [markerSize + 6, markerSize + 6],
+                    iconAnchor: [(markerSize + 6) / 2, (markerSize + 6) / 2]
                 });
             }
             
             const marker = L.marker([coords[1], coords[0]], { icon: markerIcon });
             
-            // Popup content with enhanced details
+            // Enhanced popup content
             const popupContent = `
-                <div class="map-tooltip" style="max-width: 300px;">
-                    <strong>${props.title}</strong><br>
-                    <hr style="margin: 5px 0;">
-                    <small>${props.description}</small><br>
-                    ${props.type === 'attack' ? 
-                        `<div class="mt-2">
-                            <small><strong>Request:</strong> ${props.request_url ? props.request_url.substring(0, 50) + '...' : 'N/A'}</small>
-                        </div>` : 
-                        `<div class="mt-2">
-                            <small><strong>ISP:</strong> ${props.isp || 'Unknown'}</small><br>
-                            <small><strong>ASN:</strong> ${props.asn || 'Unknown'}</small>
-                        </div>`
-                    }
-                    <hr style="margin: 5px 0;">
-                    <small class="text-muted">Click for detailed information</small>
+                <div class="map-tooltip" style="max-width: 320px; padding: 5px;">
+                    <div class="d-flex align-items-center mb-2">
+                        <i class="fas fa-${props.type === 'attack' ? 'skull-crossbones' : 'user'} me-2" style="color: ${markerColor}; font-size: 1.2rem;"></i>
+                        <strong style="color: ${markerColor}; font-size: 1.1rem;">${props.title}</strong>
+                    </div>
+                    <hr style="margin: 8px 0; border-color: #444;">
+                    <div class="mt-2" style="line-height: 1.6;">
+                        <div><i class="fas fa-ip me-2" style="width: 20px;"></i> <strong>IP:</strong> ${props.ip}</div>
+                        <div><i class="fas fa-map-marker-alt me-2" style="width: 20px;"></i> <strong>Country:</strong> ${props.country || 'Unknown'}</div>
+                        <div><i class="fas fa-clock me-2" style="width: 20px;"></i> <strong>Time:</strong> ${props.timestamp || 'Unknown'}</div>
+                        ${props.type === 'attack' ? 
+                            `<div><i class="fas fa-bug me-2" style="width: 20px;"></i> <strong>Type:</strong> ${props.attack_type || 'Unknown'}</div>
+                             <div><i class="fas fa-exclamation-triangle me-2" style="width: 20px;"></i> <strong>Severity:</strong> <span class="badge bg-${props.severity === 'Critical' ? 'danger' : (props.severity === 'High' ? 'warning' : 'info')}">${props.severity}</span></div>
+                             <div><i class="fas fa-hashtag me-2" style="width: 20px;"></i> <strong>Count:</strong> ${props.count || 1}</div>` : 
+                            `<div><i class="fas fa-network-wired me-2" style="width: 20px;"></i> <strong>ISP:</strong> ${props.isp || 'Unknown'}</div>
+                             <div><i class="fas fa-building me-2" style="width: 20px;"></i> <strong>ASN:</strong> ${props.asn || 'Unknown'}</div>
+                             ${props.vpn ? '<div class="text-warning"><i class="fas fa-shield-alt me-2" style="width: 20px;"></i> ⚠️ VPN Detected</div>' : ''}
+                             ${props.proxy ? '<div class="text-warning"><i class="fas fa-user-secret me-2" style="width: 20px;"></i> ⚠️ Proxy Detected</div>' : ''}`
+                        }
+                    </div>
+                    <hr style="margin: 8px 0; border-color: #444;">
+                    <small class="text-muted d-block text-center">Click for detailed information</small>
                 </div>
             `;
             
-            marker.bindPopup(popupContent, { maxWidth: 350 });
+            marker.bindPopup(popupContent, { 
+                maxWidth: 350,
+                className: 'custom-popup'
+            });
+            
             marker.on('click', function() {
                 showIPDetails(props, [coords[1], coords[0]]);
             });
+            
+            // Store feature data in marker for later reference
+            marker.feature = feature;
             
             // Add to appropriate layer
             if (props.type === 'visitor') {
@@ -1375,6 +1562,40 @@ $current_page = basename($_SERVER['PHP_SELF']);
         // Add layers to cluster
         markerCluster.addLayer(visitorLayer);
         markerCluster.addLayer(attackLayer);
+        
+        // Update map stats
+        updateMapStats();
+    }
+
+    // Update map statistics display
+    function updateMapStats() {
+        const visitorCount = visitorLayer.getLayers().length;
+        const attackCount = attackLayer.getLayers().length;
+        
+        $('.map-stats').html(`
+            <h6 class="mb-2"><i class="fas fa-chart-simple me-1"></i> Live Statistics</h6>
+            <div class="d-flex justify-content-between">
+                <small class="text-muted"><i class="fas fa-user me-1"></i> Visitors:</small>
+                <small><span class="text-success fw-bold">${visitorCount}</span></small>
+            </div>
+            <div class="d-flex justify-content-between">
+                <small class="text-muted"><i class="fas fa-bug me-1"></i> Attacks:</small>
+                <small><span class="text-danger fw-bold">${attackCount}</span></small>
+            </div>
+            <div class="d-flex justify-content-between">
+                <small class="text-muted"><i class="fas fa-flag me-1"></i> Countries:</small>
+                <small><span class="text-info fw-bold">${geoJsonData.stats.unique_countries}</span></small>
+            </div>
+            <div class="d-flex justify-content-between">
+                <small class="text-muted"><i class="fas fa-clock me-1"></i> Updated:</small>
+                <small>${new Date().toLocaleTimeString()}</small>
+            </div>
+            <hr class="my-2 opacity-25">
+            <div class="d-flex justify-content-between">
+                <small class="text-muted"><i class="fas fa-shield me-1"></i> Protected:</small>
+                <small><span class="text-success">Active</span></small>
+            </div>
+        `);
     }
 
     // Show IP details modal
@@ -1392,8 +1613,8 @@ $current_page = basename($_SERVER['PHP_SELF']);
         // Initialize modal map if not exists
         if (!modalMap) {
             modalMap = L.map('modalMap').setView(coordinates || [0, 0], coordinates ? 10 : 2);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap, CartoDB'
             }).addTo(modalMap);
         } else {
             modalMap.setView(coordinates || [0, 0], coordinates ? 10 : 2);
@@ -1405,7 +1626,19 @@ $current_page = basename($_SERVER['PHP_SELF']);
         }
         
         if (coordinates) {
-            L.marker(coordinates).addTo(modalMap)
+            let markerColor = props.type === 'attack' ? 
+                (props.severity === 'Critical' ? '#dc3545' : 
+                 props.severity === 'High' ? '#fd7e14' : 
+                 props.severity === 'Medium' ? '#ffc107' : '#0dcaf0') : 
+                (props.vpn || props.proxy ? '#6c757d' : '#28a745');
+                
+            L.marker(coordinates, {
+                icon: L.divIcon({
+                    html: `<div style="background-color: ${markerColor}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 15px ${markerColor};"></div>`,
+                    iconSize: [26, 26],
+                    iconAnchor: [13, 13]
+                })
+            }).addTo(modalMap)
                 .bindPopup(`<strong>${props.ip}</strong><br>${props.country}<br>${props.type === 'attack' ? props.attack_type : 'Visitor'}`)
                 .openPopup();
         }
@@ -1413,24 +1646,46 @@ $current_page = basename($_SERVER['PHP_SELF']);
         // Show attack details if available
         if (props.type === 'attack') {
             $('#modalAttackDetails').html(`
-                <div class="alert alert-${props.severity === 'critical' ? 'danger' : 'warning'}">
-                    <strong>Attack Details:</strong><br>
-                    Type: ${props.attack_type}<br>
-                    Severity: <span class="badge bg-${props.severity === 'critical' ? 'danger' : 
-                        props.severity === 'high' ? 'warning' : 
-                        props.severity === 'medium' ? 'info' : 'secondary'}">${props.severity}</span><br>
-                    Attack Count: ${props.count}<br>
-                    Request URL: <small>${props.request_url || 'N/A'}</small>
+                <div class="alert alert-${props.severity === 'Critical' ? 'danger' : (props.severity === 'High' ? 'warning' : 'info')}">
+                    <div class="d-flex align-items-center mb-2">
+                        <i class="fas fa-skull-crossbones me-2 fs-5"></i>
+                        <strong>Attack Details</strong>
+                    </div>
+                    <div class="row">
+                        <div class="col-6">
+                            <small>Type: ${props.attack_type}</small>
+                        </div>
+                        <div class="col-6">
+                            <small>Severity: <span class="badge bg-${props.severity === 'Critical' ? 'danger' : 
+                                props.severity === 'High' ? 'warning' : 
+                                props.severity === 'Medium' ? 'info' : 'secondary'}">${props.severity}</span></small>
+                        </div>
+                        <div class="col-6">
+                            <small>Attack Count: ${props.count}</small>
+                        </div>
+                        <div class="col-12 mt-2">
+                            <small>Request URL: <code class="text-light">${props.request_url || 'N/A'}</code></small>
+                        </div>
+                    </div>
                 </div>
             `);
         } else {
             $('#modalAttackDetails').html(`
                 <div class="alert alert-info">
-                    <strong>Visitor Information:</strong><br>
-                    Type: ${props.vpn ? 'VPN User' : props.proxy ? 'Proxy User' : 'Normal Visitor'}<br>
-                    Fingerprint: <code>${props.fingerprint || 'Unknown'}</code><br>
-                    ${props.vpn ? '<span class="badge bg-warning">⚠️ VPN Detected</span> ' : ''}
-                    ${props.proxy ? '<span class="badge bg-warning">⚠️ Proxy Detected</span>' : ''}
+                    <div class="d-flex align-items-center mb-2">
+                        <i class="fas fa-user me-2 fs-5"></i>
+                        <strong>Visitor Information</strong>
+                    </div>
+                    <div class="row">
+                        <div class="col-6">
+                            <small>Type: ${props.vpn ? 'VPN User' : props.proxy ? 'Proxy User' : 'Normal Visitor'}</small>
+                        </div>
+                        <div class="col-6">
+                            <small>Fingerprint: <code>${props.fingerprint || 'Unknown'}</code></small>
+                        </div>
+                    </div>
+                    ${props.vpn ? '<div class="mt-2 text-warning"><i class="fas fa-shield-alt me-1"></i> ⚠️ VPN Detected</div>' : ''}
+                    ${props.proxy ? '<div class="mt-2 text-warning"><i class="fas fa-user-secret me-1"></i> ⚠️ Proxy Detected</div>' : ''}
                 </div>
             `);
         }
@@ -1449,32 +1704,24 @@ $current_page = basename($_SERVER['PHP_SELF']);
             
             // Check if marker's popup contains this IP
             if (content && content.includes(ip)) {
-                map.setView(latLng, 10);
+                map.setView(latLng, 12);
                 marker.openPopup();
                 
-                // Highlight marker
-                marker.setIcon(L.divIcon({
+                // Highlight marker with temporary animation
+                const originalIcon = marker.options.icon;
+                const highlightIcon = L.divIcon({
                     className: 'attack-marker',
-                    html: `<div style="background-color: #ff00ff; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 15px #ff00ff; animation: pulse 1s infinite;"></div>`,
-                    iconSize: [24, 24],
-                    iconAnchor: [12, 12]
-                }));
+                    html: `<div style="background-color: #ff00ff; width: 30px; height: 30px; border-radius: 50%; border: 4px solid white; box-shadow: 0 0 30px #ff00ff; animation: pulse 1s infinite;"></div>`,
+                    iconSize: [38, 38],
+                    iconAnchor: [19, 19]
+                });
                 
+                marker.setIcon(highlightIcon);
                 found = true;
                 
                 // Reset after 3 seconds
                 setTimeout(() => {
-                    const originalContent = marker.feature ? marker.feature.properties : null;
-                    if (originalContent) {
-                        const originalColor = originalContent.type === 'attack' ? originalContent.color : 
-                                            (originalContent.vpn || originalContent.proxy) ? '#6c757d' : '#28a745';
-                        marker.setIcon(L.divIcon({
-                            className: 'attack-marker',
-                            html: `<div style="background-color: ${originalColor}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`,
-                            iconSize: [16, 16],
-                            iconAnchor: [8, 8]
-                        }));
-                    }
+                    marker.setIcon(originalIcon);
                 }, 3000);
             }
         });
@@ -1521,26 +1768,32 @@ $current_page = basename($_SERVER['PHP_SELF']);
         // Layer toggle controls
         $('#showVisitors').change(function() {
             if ($(this).is(':checked')) {
-                map.addLayer(visitorLayer);
+                markerCluster.addLayer(visitorLayer);
             } else {
-                map.removeLayer(visitorLayer);
+                markerCluster.removeLayer(visitorLayer);
             }
+            updateMapStats();
         });
         
         $('#showAttacks').change(function() {
             if ($(this).is(':checked')) {
-                map.addLayer(attackLayer);
+                markerCluster.addLayer(attackLayer);
             } else {
-                map.removeLayer(attackLayer);
+                markerCluster.removeLayer(attackLayer);
             }
+            updateMapStats();
         });
         
         $('#clusterMarkers').change(function() {
             if ($(this).is(':checked')) {
                 map.removeLayer(markers);
                 map.addLayer(markerCluster);
+                markerCluster.addLayer(visitorLayer);
+                markerCluster.addLayer(attackLayer);
             } else {
                 map.removeLayer(markerCluster);
+                markers.addLayer(visitorLayer);
+                markers.addLayer(attackLayer);
                 map.addLayer(markers);
             }
         });
@@ -1558,13 +1811,20 @@ $current_page = basename($_SERVER['PHP_SELF']);
             }
         });
         
-        // Auto-refresh every 60 seconds
-        setTimeout(function(){
-            location.reload();
-        }, 60000);
+        // Auto-refresh every 60 seconds (optional - can be disabled)
+        // setTimeout(function(){
+        //     location.reload();
+        // }, 60000);
+        
+        // Add window resize handler to fix map display
+        $(window).on('resize', function() {
+            if (map) {
+                map.invalidateSize();
+            }
+        });
     });
 
-    // Add CSS for pulsing animation
+    // Add CSS for animations
     const style = document.createElement('style');
     style.textContent = `
         @keyframes pulse {
@@ -1572,16 +1832,53 @@ $current_page = basename($_SERVER['PHP_SELF']);
             50% { transform: scale(1.2); opacity: 0.7; }
             100% { transform: scale(1); opacity: 1; }
         }
+        
+        .visitor-marker, .attack-marker {
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .visitor-marker:hover, .attack-marker:hover {
+            transform: scale(1.2);
+            z-index: 1000;
+            filter: drop-shadow(0 0 10px currentColor);
+        }
+        
         .leaflet-popup-content {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 15px !important;
         }
-        .leaflet-popup-content-wrapper {
-            background: rgba(0, 0, 0, 0.9);
-            color: #fff;
-            border-radius: 5px;
+        
+        .leaflet-control-attribution {
+            background: rgba(0,0,0,0.5) !important;
+            color: #999 !important;
+            font-size: 9px !important;
+            padding: 2px 5px !important;
+            border-radius: 3px !important;
         }
-        .leaflet-popup-tip {
-            background: rgba(0, 0, 0, 0.9);
+        
+        .leaflet-control-attribution a {
+            color: #ccc !important;
+        }
+        
+        .leaflet-control-zoom {
+            border: none !important;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3) !important;
+        }
+        
+        .leaflet-control-zoom a {
+            background-color: #1e1e1e !important;
+            color: #fff !important;
+            border: 1px solid #444 !important;
+        }
+        
+        .leaflet-control-zoom a:hover {
+            background-color: #2d2d2d !important;
+        }
+        
+        .leaflet-control-scale-line {
+            background: rgba(30,30,30,0.8) !important;
+            border: 1px solid #444 !important;
+            color: #ccc !important;
         }
     `;
     document.head.appendChild(style);
