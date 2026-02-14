@@ -78,7 +78,7 @@ if (ob_get_level() == 0) {
             referrer: document.referrer || "None",
             ip: serverIP, // Include server IP
             website_id: 1, // Default website ID
-            user_id: generateUserId() // Generate or get user ID
+            user_id: 1 // Generate or get user ID
         };
 
         // Collect additional info
@@ -111,15 +111,7 @@ if (ob_get_level() == 0) {
 // Helper function to generate or get user ID
 function generateUserId() {
     // Try to get existing user ID from localStorage
-    let userId = localStorage.getItem('visitor_id');
-    if (!userId) {
-        // Generate new UUID v4
-        userId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-            var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-        });
-        localStorage.setItem('visitor_id', userId);
-    }
+    let userId = 1
     return userId;
 }
 

@@ -68,10 +68,10 @@ function get_reverse_dns($ip) {
 
 // ---------------- DYNAMIC IDs ----------------
 // user_id from input or generate one
-$user_id = isset($input['user_id']) && preg_match('/^[a-f0-9\-]{36}$/i', $input['user_id'])
-    ? sanitize_string($input['user_id'])
-    : session_id();
-
+// $user_id = isset($input['user_id']) && preg_match('/^[a-f0-9\-]{36}$/i', $input['user_id'])
+//     ? sanitize_string($input['user_id'])
+//     : session_id();
+$user_id =1;
 // website_id must be numeric
 $website_id = sanitize_int($input['website_id'] ?? 1);
 

@@ -17,7 +17,7 @@ if (!$userId) {
     exit();
 }
 
-// Get website ID from session or default (assuming user has websites)
+// Get website ID from session or default
 $websiteId = $_SESSION['website_id'] ?? 1;
 
 // Make sure $pdo is available
@@ -29,7 +29,7 @@ $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 // Debug mode
 $debug = isset($_GET['debug']) ? true : false;
 
-// Base SQL with user & website filter - FIXED: Use correct column names
+// Base SQL with user & website filter - FIXED: Using correct column names based on your database
 $sql = "SELECT * FROM logs WHERE user_id = :user_id AND website_id = :website_id";
 
 // Add search conditions
@@ -40,11 +40,12 @@ $params = [
 
 if (!empty($search)) {
     $searchConditions = [];
+    // Using your actual column names from the database
     $searchColumns = [
-        'ip', 'real_ip', 'country', 'isp', 'user_agent', 
+        'ip', 'real_ip', 'country', 'ISP', 'user_agent', 
         'digital_dna', 'city', 'webrtc_ip', 'dns_leak_ip', 
         'screen_resolution', 'timezone', 'language', 
-        'reverse_dns', 'asn', 'org', 'region'
+        'reverse_dns', 'ASN'
     ];
     
     $i = 1;
@@ -71,8 +72,6 @@ if (isset($_GET['privacy']) && !empty($_GET['privacy'])) {
         $sql .= " AND is_tor = 1";
     } elseif ($_GET['privacy'] == 'proxy') {
         $sql .= " AND is_proxy = 1";
-    } elseif ($_GET['privacy'] == 'hosting') {
-        $sql .= " AND is_hosting = 1";
     } elseif ($_GET['privacy'] == 'clean') {
         $sql .= " AND is_vpn = 0 AND is_tor = 0 AND is_proxy = 0";
     }
@@ -121,20 +120,18 @@ try {
     $error = "Database error: " . $e->getMessage();
     error_log($error);
     
-    // Show more detailed error in debug mode
     if ($debug) {
         echo "<div class='alert alert-danger'><pre>Error Details: " . htmlspecialchars($e->getMessage()) . "</pre></div>";
         echo "<div class='alert alert-warning'><pre>SQL Query: " . htmlspecialchars($sql) . "</pre></div>";
     }
 }
 
-// Get summary statistics - FIXED: Use correct column names
+// Get summary statistics - Using correct column names
 $stats = [
     'total_visitors' => 0,
     'vpn_users' => 0,
     'tor_users' => 0,
     'proxy_users' => 0,
-    'hosting_users' => 0,
     'unique_countries' => [],
     'unique_cities' => [],
     'unique_ips' => []
@@ -145,7 +142,6 @@ foreach ($logs as $row) {
     if (isset($row['is_vpn']) && $row['is_vpn']) $stats['vpn_users']++;
     if (isset($row['is_tor']) && $row['is_tor']) $stats['tor_users']++;
     if (isset($row['is_proxy']) && $row['is_proxy']) $stats['proxy_users']++;
-    if (isset($row['is_hosting']) && $row['is_hosting']) $stats['hosting_users']++;
     if (!empty($row['country']) && $row['country'] != 'Unknown') $stats['unique_countries'][$row['country']] = true;
     if (!empty($row['city']) && $row['city'] != 'Unknown') $stats['unique_cities'][$row['city']] = true;
     if (!empty($row['ip'])) $stats['unique_ips'][$row['ip']] = true;
@@ -367,7 +363,6 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                         <option value="vpn" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'vpn' ? 'selected' : ''; ?>>VPN Users Only</option>
                         <option value="tor" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'tor' ? 'selected' : ''; ?>>Tor Users Only</option>
                         <option value="proxy" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'proxy' ? 'selected' : ''; ?>>Proxy Users Only</option>
-                        <option value="hosting" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'hosting' ? 'selected' : ''; ?>>Hosting/Data Center</option>
                         <option value="clean" <?php echo isset($_GET['privacy']) && $_GET['privacy'] == 'clean' ? 'selected' : ''; ?>>Clean Users Only</option>
                     </select>
                 </div>
@@ -454,7 +449,6 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                 if (isset($row['is_vpn']) && $row['is_vpn']) $privacyBadges[] = '<span class="badge bg-danger">VPN</span>';
                                 if (isset($row['is_tor']) && $row['is_tor']) $privacyBadges[] = '<span class="badge bg-warning">TOR</span>';
                                 if (isset($row['is_proxy']) && $row['is_proxy']) $privacyBadges[] = '<span class="badge bg-info">Proxy</span>';
-                                if (isset($row['is_hosting']) && $row['is_hosting']) $privacyBadges[] = '<span class="badge bg-secondary">Hosting</span>';
                                 if (!empty($row['webrtc_ip']) && $row['webrtc_ip'] != 'Unknown' && $row['webrtc_ip'] != $row['ip']) {
                                     $privacyBadges[] = '<span class="badge bg-info">WebRTC Leak</span>';
                                 }
@@ -475,17 +469,15 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                     $fingerprint = substr($fingerprint, 0, 15) . '...';
                                 }
                                 
-                                // Ensure all variables are set with correct column names
+                                // Use correct column names based on your database
                                 $rowId = $row['id'] ?? '';
                                 $ip = $row['ip'] ?? '';
                                 $realIp = $row['real_ip'] ?? '';
                                 $country = $row['country'] ?? 'Unknown';
                                 $city = $row['city'] ?? '';
-                                $isp = $row['isp'] ?? 'Unknown';
+                                $isp = $row['ISP'] ?? 'Unknown';  // Note: uppercase ISP
                                 $screenResolution = $row['screen_resolution'] ?? 'N/A';
-                                $asn = $row['asn'] ?? 'N/A';
-                                $asname = $row['asname'] ?? '';
-                                $org = $row['org'] ?? '';
+                                $asn = $row['ASN'] ?? 'N/A';      // Note: uppercase ASN
                                 $webrtcIp = $row['webrtc_ip'] ?? 'N/A';
                                 $dnsLeakIp = $row['dns_leak_ip'] ?? 'N/A';
                                 $reverseDns = $row['reverse_dns'] ?? '';
@@ -493,6 +485,7 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                 $longitude = $row['longitude'] ?? '0';
                                 $timezone = $row['timezone'] ?? 'UTC';
                                 $timestamp = $row['timestamp'] ?? '';
+                                $userAgentFull = $row['user_agent'] ?? '';
                                 ?>
                                 <tr>
                                     <td>
@@ -518,10 +511,7 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                                     <small><strong>ASN:</strong> <?php echo htmlspecialchars($asn); ?></small>
                                                 </div>
                                                 <div class="col-md-6">
-                                                    <small><strong>AS Name:</strong> <?php echo htmlspecialchars($asname); ?></small>
-                                                </div>
-                                                <div class="col-md-6">
-                                                    <small><strong>Organization:</strong> <?php echo htmlspecialchars($org); ?></small>
+                                                    <small><strong>ISP:</strong> <?php echo htmlspecialchars($isp); ?></small>
                                                 </div>
                                                 <div class="col-md-6">
                                                     <small><strong>WebRTC IP:</strong> <?php echo htmlspecialchars($webrtcIp); ?></small>
@@ -567,7 +557,7 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                         <small><?php echo htmlspecialchars($screenResolution); ?></small>
                                     </td>
                                     <td>
-                                        <small title="<?php echo htmlspecialchars($row['user_agent'] ?? ''); ?>"><?php echo $userAgent; ?></small>
+                                        <small title="<?php echo htmlspecialchars($userAgentFull); ?>"><?php echo $userAgent; ?></small>
                                     </td>
                                     <td>
                                         <code title="<?php echo htmlspecialchars($row['digital_dna'] ?? ''); ?>"><?php echo htmlspecialchars($fingerprint); ?></code>
