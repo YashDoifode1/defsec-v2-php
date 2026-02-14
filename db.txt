@@ -339,4 +339,22 @@ CREATE TABLE `websites` (
   `status` enum('active','paused') DEFAULT 'active',
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 )
-Key Observations:] can we crreate such an api.php script which is includeed in client s from server then it check for blocked_ips for their website_id , user_id by fetching inspect.php which is on server website and it fetch response by passsing api_key from users table and inspect.php get that api_key resolve user_id and website_id and check that the ip is blocked or not if its block then it blocked.php accordingly  
+Key Observations:] 
+
+APP_NAME="Defsec Cybersecurity Dashboard"
+APP_VERSION="1.0.0"
+BASE_URL="https://defsec-v2.42web.io
+
+DB_HOST=sql110.infinityfree.com
+DB_USER=if0_41139861
+DB_PASS=PmPCYvBP79RP
+DB_NAME=if0_41139861_defsec
+
+PASSWORD_HASH_COST=12
+MAX_LOGIN_ATTEMPTS=5
+LOGIN_ATTEMPTS_TIMEFRAME=300
+SESSION_TIMEOUT=1800
+CSRF_TOKEN_LIFETIME=3600
+
+ITEMS_PER_PAGE=20
+AUTO_REFRESH_INTERVAL=30000
