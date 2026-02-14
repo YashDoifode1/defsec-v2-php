@@ -41,7 +41,7 @@ if (ob_get_level() == 0) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Visitor Information</title>
+<!-- <title>Visitor Information</title> -->
 <style>
     .tracking-info {
         display: none; /* Hide tracking info from users */
