@@ -22,6 +22,14 @@ $hostname = get_reverse_dns($ip);
 // You should set these dynamically based on your application
 $user_id = 1; // This should come from your session/auth system
 $website_id = 1; // This should be set based on the current website
+
+// Generate a consistent browser fingerprint on server side as fallback
+function generateServerFingerprint($ip, $userAgent) {
+    $fingerprintData = $ip . $userAgent . $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? 'en';
+    return hash('sha256', $fingerprintData);
+}
+
+$serverFingerprint = generateServerFingerprint($ip, $_SERVER['HTTP_USER_AGENT'] ?? '');
 ?>
 
 <!DOCTYPE html>
@@ -48,7 +56,8 @@ $website_id = 1; // This should be set based on the current website
     <p><strong>Battery:</strong> <span id="battery"></span></p>
     <p><strong>Timezone:</strong> <span id="timezone"></span></p>
     <p><strong>Cookies Enabled:</strong> <span id="cookies"></span></p>
-    <p><strong>DNA:</strong> <span id="digital-dna"></span></p>
+    <p><strong>Digital Fingerprint:</strong> <span id="digital-dna">Generating...</span></p>
+    <p><strong>Server Fingerprint:</strong> <?php echo $serverFingerprint; ?></p>
     <p><strong>Country:</strong> <span id="country">Checking...</span></p>
     <p><strong>City:</strong> <span id="city">Checking...</span></p>
     <p><strong>ISP:</strong> <span id="isp">Checking...</span></p>
@@ -56,6 +65,9 @@ $website_id = 1; // This should be set based on the current website
     <p><strong>VPN/Proxy Status:</strong> <span id="vpn-status">Checking...</span></p>
 
     <script>
+      // Store fingerprint in sessionStorage to maintain consistency across page loads
+      let consistentFingerprint = sessionStorage.getItem('visitor_fingerprint');
+      
       async function collectBrowserData() {
           let real_ip = "<?php echo $ip; ?>";
           let user_id = <?php echo $user_id; ?>;
@@ -63,6 +75,22 @@ $website_id = 1; // This should be set based on the current website
 
           // Get country and additional geo info
           let geoInfo = await getGeoInfo();
+
+          // Normalize values for consistent fingerprinting
+          let normalizedData = {
+              userAgent: normalizeUserAgent(navigator.userAgent),
+              platform: navigator.platform || 'Unknown',
+              language: navigator.language || 'en-US',
+              screenResolution: screen.width + "x" + screen.height,
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              cookiesEnabled: navigator.cookieEnabled ? "Yes" : "No",
+              cpuCores: navigator.hardwareConcurrency || "Unknown",
+              // Use standardized values
+              colorDepth: screen.colorDepth || 24,
+              pixelRatio: window.devicePixelRatio || 1,
+              touchSupport: 'ontouchstart' in window ? 'Yes' : 'No',
+              doNotTrack: navigator.doNotTrack || 'Unknown'
+          };
 
           let deviceInfo = {
               user_id: user_id,
@@ -76,19 +104,10 @@ $website_id = 1; // This should be set based on the current website
               ASN: geoInfo.asn || 'Unknown',
               latitude: geoInfo.latitude || null,
               longitude: geoInfo.longitude || null,
-              is_vpn: 0, // Will be updated by server-side check
-              is_proxy: 0, // Will be updated by server-side check
-              is_tor: 0, // Will be updated by server-side check
-              userAgent: navigator.userAgent,
-              platform: navigator.platform,
-              language: navigator.language,
-              screenResolution: screen.width + "x" + screen.height,
-              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-              cookiesEnabled: navigator.cookieEnabled ? "Yes" : "No",
-              cpuCores: navigator.hardwareConcurrency || "Unknown",
-              ram: navigator.deviceMemory ? navigator.deviceMemory + " GB" : "Unknown",
-              referrer: document.referrer || "None",
-              plugins: Array.from(navigator.plugins).map(p => p.name).join(", ") || "No plugins found"
+              is_vpn: 0,
+              is_proxy: 0,
+              is_tor: 0,
+              ...normalizedData
           };
 
           let [gpu, battery, webrtcIP, dnsLeakIP] = await Promise.all([
@@ -103,20 +122,13 @@ $website_id = 1; // This should be set based on the current website
           deviceInfo.webrtcIP = webrtcIP;
           deviceInfo.dnsLeakIP = dnsLeakIP;
 
-          // Exclude IPs and user identifiers from hashing
-          let dnaInput = { ...deviceInfo };
-          delete dnaInput.ip;
-          delete dnaInput.real_ip;
-          delete dnaInput.webrtcIP;
-          delete dnaInput.dnsLeakIP;
-          delete dnaInput.battery;
-          delete dnaInput.user_id;
-          delete dnaInput.website_id;
-          delete dnaInput.latitude;
-          delete dnaInput.longitude;
-
-          let digitalDNA = await generateSHA256(JSON.stringify(dnaInput));
+          // Generate consistent fingerprint
+          let digitalDNA = await generateConsistentFingerprint(deviceInfo);
           deviceInfo.digitalDNA = digitalDNA;
+
+          // Store fingerprint for future use
+          sessionStorage.setItem('visitor_fingerprint', digitalDNA);
+          localStorage.setItem('visitor_fingerprint_' + digitalDNA.substring(0, 8), Date.now());
 
           // Display Data
           document.getElementById('user-agent').innerText = deviceInfo.userAgent;
@@ -126,7 +138,7 @@ $website_id = 1; // This should be set based on the current website
           document.getElementById('timezone').innerText = deviceInfo.timezone;
           document.getElementById('cookies').innerText = deviceInfo.cookiesEnabled;
           document.getElementById('cpu-cores').innerText = deviceInfo.cpuCores;
-          document.getElementById('ram').innerText = deviceInfo.ram;
+          document.getElementById('ram').innerText = deviceInfo.ram || 'Unknown';
           document.getElementById('gpu').innerText = deviceInfo.gpu;
           document.getElementById('battery').innerText = deviceInfo.battery;
           document.getElementById('webrtc-ip').innerText = webrtcIP;
@@ -139,6 +151,107 @@ $website_id = 1; // This should be set based on the current website
           document.getElementById('vpn-status').innerText = deviceInfo.is_vpn ? 'Yes' : 'No';
 
           sendData(deviceInfo);
+      }
+
+      // Normalize user agent to remove version-specific details that might change
+      function normalizeUserAgent(ua) {
+          // Remove version numbers from browser names for consistency
+          return ua
+              .replace(/(Chrome\/)[0-9.]+/g, '$1XX')
+              .replace(/(Firefox\/)[0-9.]+/g, '$1XX')
+              .replace(/(Safari\/)[0-9.]+/g, '$1XX')
+              .replace(/(Edge\/)[0-9.]+/g, '$1XX')
+              .replace(/(OPR\/)[0-9.]+/g, '$1XX');
+      }
+
+      async function generateConsistentFingerprint(data) {
+          // If we already have a fingerprint stored, use it
+          if (consistentFingerprint) {
+              console.log('Using stored fingerprint:', consistentFingerprint);
+              return consistentFingerprint;
+          }
+
+          // Create a consistent string for hashing
+          const fingerprintParts = [
+              data.userAgent,
+              data.platform,
+              data.language,
+              data.screenResolution,
+              data.timezone,
+              data.cookiesEnabled,
+              data.cpuCores,
+              data.colorDepth,
+              data.pixelRatio,
+              data.touchSupport,
+              data.doNotTrack
+          ];
+
+          // Add WebGL fingerprint if available (more stable)
+          let canvas = document.createElement('canvas');
+          let gl = canvas.getContext('webgl');
+          if (gl) {
+              let debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+              if (debugInfo) {
+                  fingerprintParts.push(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL));
+                  fingerprintParts.push(gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL));
+              }
+          }
+
+          // Add canvas fingerprint
+          let canvasFingerprint = await getCanvasFingerprint();
+          fingerprintParts.push(canvasFingerprint);
+
+          // Add installed fonts fingerprint
+          let fontsFingerprint = await getFontsFingerprint();
+          fingerprintParts.push(fontsFingerprint);
+
+          // Sort to ensure consistent order
+          fingerprintParts.sort();
+          
+          const fingerprintString = fingerprintParts.join('|');
+          console.log('Fingerprint string:', fingerprintString);
+
+          // Generate SHA-256 hash
+          const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprintString));
+          const hash = Array.from(new Uint8Array(hashBuffer))
+              .map(byte => byte.toString(16).padStart(2, '0'))
+              .join('');
+          
+          consistentFingerprint = hash;
+          return hash;
+      }
+
+      // Canvas fingerprinting for more stability
+      async function getCanvasFingerprint() {
+          let canvas = document.createElement('canvas');
+          canvas.width = 200;
+          canvas.height = 50;
+          let ctx = canvas.getContext('2d');
+          ctx.textBaseline = 'top';
+          ctx.font = '14px Arial';
+          ctx.fillStyle = '#f60';
+          ctx.fillRect(0, 0, 100, 50);
+          ctx.fillStyle = '#069';
+          ctx.fillText('Fingerprint', 2, 15);
+          ctx.fillStyle = 'rgba(102, 204, 0, 0.7)';
+          ctx.fillText('Test', 2, 30);
+          
+          return canvas.toDataURL();
+      }
+
+      // Fonts fingerprinting
+      async function getFontsFingerprint() {
+          const fonts = ['Arial', 'Verdana', 'Times New Roman', 'Courier New', 'Helvetica', 'Comic Sans MS'];
+          let canvas = document.createElement('canvas');
+          let ctx = canvas.getContext('2d');
+          let results = [];
+          
+          fonts.forEach(font => {
+              ctx.font = `12px ${font}`;
+              results.push(ctx.measureText('abcdefghijklmnopqrstuvwxyz').width.toFixed(2));
+          });
+          
+          return results.join('|');
       }
 
       async function getGeoInfo() {
@@ -173,16 +286,6 @@ $website_id = 1; // This should be set based on the current website
           return Math.round(battery.level * 100) + "%";
       }
 
-      async function generateSHA256(input) {
-          console.log("Hashing Input:", input); // Debugging
-          const encoder = new TextEncoder();
-          const data = encoder.encode(input);
-          const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-          const hash = Array.from(new Uint8Array(hashBuffer)).map(byte => byte.toString(16).padStart(2, '0')).join('');
-          console.log("Generated SHA-256 Hash:", hash); // Debugging
-          return hash;
-      }
-
       function detectWebRTCLeak() {
           return new Promise((resolve) => {
               let rtc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
@@ -211,7 +314,7 @@ $website_id = 1; // This should be set based on the current website
       }
 
       function sendData(data) {
-          console.log("Sending Data to Server:", data); // Debugging
+          console.log("Sending Data to Server with Fingerprint:", data.digitalDNA);
 
           fetch("data.php", {
               method: "POST",
@@ -219,7 +322,7 @@ $website_id = 1; // This should be set based on the current website
               body: JSON.stringify(data)
           })
           .then(response => response.text())
-          .then(result => console.log("Server Response:", result)) // Debugging
+          .then(result => console.log("Server Response:", result))
           .catch(error => console.error("Error sending data:", error));
       }
     </script>

@@ -29,7 +29,7 @@ $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 // Debug mode
 $debug = isset($_GET['debug']) ? true : false;
 
-// Base SQL with user & website filter - FIXED: Using correct column names based on your database
+// Base SQL with user & website filter
 $sql = "SELECT * FROM logs WHERE user_id = :user_id AND website_id = :website_id";
 
 // Add search conditions
@@ -126,7 +126,7 @@ try {
     }
 }
 
-// Get summary statistics - Using correct column names
+// Get summary statistics
 $stats = [
     'total_visitors' => 0,
     'vpn_users' => 0,
@@ -475,9 +475,9 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                 $realIp = $row['real_ip'] ?? '';
                                 $country = $row['country'] ?? 'Unknown';
                                 $city = $row['city'] ?? '';
-                                $isp = $row['ISP'] ?? 'Unknown';  // Note: uppercase ISP
+                                $isp = $row['ISP'] ?? 'Unknown';
                                 $screenResolution = $row['screen_resolution'] ?? 'N/A';
-                                $asn = $row['ASN'] ?? 'N/A';      // Note: uppercase ASN
+                                $asn = $row['ASN'] ?? 'N/A';
                                 $webrtcIp = $row['webrtc_ip'] ?? 'N/A';
                                 $dnsLeakIp = $row['dns_leak_ip'] ?? 'N/A';
                                 $reverseDns = $row['reverse_dns'] ?? '';
@@ -486,6 +486,14 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                 $timezone = $row['timezone'] ?? 'UTC';
                                 $timestamp = $row['timestamp'] ?? '';
                                 $userAgentFull = $row['user_agent'] ?? '';
+                                $language = $row['language'] ?? 'Unknown';
+                                $cookiesEnabled = $row['cookies_enabled'] ?? 'Unknown';
+                                $cpuCores = $row['cpu_cores'] ?? 'Unknown';
+                                $ram = $row['ram'] ?? 'Unknown';
+                                $gpu = $row['gpu'] ?? 'Unknown';
+                                $battery = $row['battery'] ?? 'Unknown';
+                                $referrer = $row['referrer'] ?? 'Direct';
+                                $plugins = $row['plugins'] ?? 'None';
                                 ?>
                                 <tr>
                                     <td>
@@ -500,32 +508,6 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                                 <br>
                                                 <small class="text-muted" title="Reverse DNS"><?php echo htmlspecialchars($reverseDns); ?></small>
                                             <?php endif; ?>
-                                        </div>
-                                        <button class="btn btn-sm btn-link p-0 text-info" 
-                                                onclick="toggleDetails('details-<?php echo $rowId; ?>')">
-                                            <small><i class="fas fa-chevron-down me-1"></i> Details</small>
-                                        </button>
-                                        <div id="details-<?php echo $rowId; ?>" class="mt-2 p-2 bg-dark rounded" style="display: none;">
-                                            <div class="row g-2">
-                                                <div class="col-md-6">
-                                                    <small><strong>ASN:</strong> <?php echo htmlspecialchars($asn); ?></small>
-                                                </div>
-                                                <div class="col-md-6">
-                                                    <small><strong>ISP:</strong> <?php echo htmlspecialchars($isp); ?></small>
-                                                </div>
-                                                <div class="col-md-6">
-                                                    <small><strong>WebRTC IP:</strong> <?php echo htmlspecialchars($webrtcIp); ?></small>
-                                                </div>
-                                                <div class="col-md-6">
-                                                    <small><strong>DNS Leak IP:</strong> <?php echo htmlspecialchars($dnsLeakIp); ?></small>
-                                                </div>
-                                                <div class="col-md-6">
-                                                    <small><strong>Timezone:</strong> <?php echo htmlspecialchars($timezone); ?></small>
-                                                </div>
-                                                <div class="col-md-12">
-                                                    <small><strong>Coordinates:</strong> <?php echo $latitude; ?>, <?php echo $longitude; ?></small>
-                                                </div>
-                                            </div>
                                         </div>
                                     </td>
                                     <td>
@@ -564,6 +546,40 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
                                     </td>
                                     <td>
                                         <div class="btn-group btn-group-sm" role="group">
+                                            <button class="btn btn-outline-primary" 
+                                                    onclick='showLogDetails(<?php echo json_encode([
+                                                        'id' => $rowId,
+                                                        'timestamp' => $timestamp,
+                                                        'ip' => $ip,
+                                                        'real_ip' => $realIp,
+                                                        'country' => $country,
+                                                        'city' => $city,
+                                                        'isp' => $isp,
+                                                        'asn' => $asn,
+                                                        'reverse_dns' => $reverseDns,
+                                                        'webrtc_ip' => $webrtcIp,
+                                                        'dns_leak_ip' => $dnsLeakIp,
+                                                        'user_agent' => $userAgentFull,
+                                                        'screen_resolution' => $screenResolution,
+                                                        'language' => $language,
+                                                        'timezone' => $timezone,
+                                                        'cookies_enabled' => $cookiesEnabled,
+                                                        'cpu_cores' => $cpuCores,
+                                                        'ram' => $ram,
+                                                        'gpu' => $gpu,
+                                                        'battery' => $battery,
+                                                        'referrer' => $referrer,
+                                                        'plugins' => $plugins,
+                                                        'digital_dna' => $row['digital_dna'] ?? '',
+                                                        'is_vpn' => $row['is_vpn'] ?? 0,
+                                                        'is_tor' => $row['is_tor'] ?? 0,
+                                                        'is_proxy' => $row['is_proxy'] ?? 0,
+                                                        'latitude' => $latitude,
+                                                        'longitude' => $longitude
+                                                    ]); ?>)'
+                                                    title="View Full Details">
+                                                <i class="fas fa-eye"></i>
+                                            </button>
                                             <button class="btn btn-outline-info" 
                                                     onclick="fetchWhois('<?php echo htmlspecialchars($ip); ?>')"
                                                     title="RDAP/Whois Lookup">
@@ -642,13 +658,236 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
     </div>
 </div>
 
+<!-- Log Details Modal -->
+<div class="modal fade" id="logDetailsModal" tabindex="-1" aria-labelledby="logDetailsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title" id="logDetailsModalLabel">
+                    <i class="fas fa-user-shield me-2 text-primary"></i>
+                    Complete User Tracking Details
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="logDetailsContent">
+                <!-- Content will be populated by JavaScript -->
+                <div class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-3 text-muted">Loading details...</p>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="fas fa-times me-2"></i>Close
+                </button>
+                <button type="button" class="btn btn-danger" id="modalBlockIpBtn">
+                    <i class="fas fa-ban me-2"></i>Block IP
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- SweetAlert2 -->
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <!-- Bootstrap JS -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
-    // Toggle details visibility
+    // Show log details in modal
+    function showLogDetails(data) {
+        const modal = new bootstrap.Modal(document.getElementById('logDetailsModal'));
+        
+        // Format privacy badges
+        let privacyBadges = '';
+        if (data.is_vpn) privacyBadges += '<span class="badge bg-danger me-1">VPN</span>';
+        if (data.is_tor) privacyBadges += '<span class="badge bg-warning me-1">TOR</span>';
+        if (data.is_proxy) privacyBadges += '<span class="badge bg-info me-1">Proxy</span>';
+        if (!privacyBadges) privacyBadges = '<span class="badge bg-success">Clean</span>';
+        
+        // Format coordinates
+        const hasCoordinates = data.latitude && data.longitude && data.latitude != '0' && data.longitude != '0';
+        
+        // Build modal content
+        const content = `
+            <div class="row g-4">
+                <!-- Basic Information -->
+                <div class="col-md-6">
+                    <div class="bg-dark rounded p-3 border border-secondary">
+                        <h6 class="text-primary mb-3"><i class="fas fa-info-circle me-2"></i>Basic Information</h6>
+                        <table class="table table-dark table-sm">
+                            <tr>
+                                <th style="width: 120px;">Log ID:</th>
+                                <td><span class="badge bg-primary">#${data.id}</span></td>
+                            </tr>
+                            <tr>
+                                <th>Timestamp:</th>
+                                <td>${data.timestamp}</td>
+                            </tr>
+                            <tr>
+                                <th>Privacy Status:</th>
+                                <td>${privacyBadges}</td>
+                            </tr>
+                            <tr>
+                                <th>Digital DNA:</th>
+                                <td><code class="text-info" style="word-break: break-all;">${data.digital_dna}</code></td>
+                            </tr>
+                            <tr>
+                                <th>Referrer:</th>
+                                <td><small class="text-muted">${data.referrer}</small></td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- IP & Network Information -->
+                <div class="col-md-6">
+                    <div class="bg-dark rounded p-3 border border-secondary">
+                        <h6 class="text-info mb-3"><i class="fas fa-network-wired me-2"></i>IP & Network Information</h6>
+                        <table class="table table-dark table-sm">
+                            <tr>
+                                <th style="width: 120px;">IP Address:</th>
+                                <td><code>${data.ip}</code></td>
+                            </tr>
+                            <tr>
+                                <th>Real IP:</th>
+                                <td><code>${data.real_ip}</code></td>
+                            </tr>
+                            <tr>
+                                <th>Reverse DNS:</th>
+                                <td><small>${data.reverse_dns}</small></td>
+                            </tr>
+                            <tr>
+                                <th>WebRTC IP:</th>
+                                <td><code class="${data.webrtc_ip != 'N/A' && data.webrtc_ip != data.ip ? 'text-warning' : ''}">${data.webrtc_ip}</code></td>
+                            </tr>
+                            <tr>
+                                <th>DNS Leak IP:</th>
+                                <td><code class="${data.dns_leak_ip != 'N/A' ? 'text-warning' : ''}">${data.dns_leak_ip}</code></td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Location Information -->
+                <div class="col-md-6">
+                    <div class="bg-dark rounded p-3 border border-secondary">
+                        <h6 class="text-success mb-3"><i class="fas fa-map-marker-alt me-2"></i>Location Information</h6>
+                        <table class="table table-dark table-sm">
+                            <tr>
+                                <th style="width: 120px;">Country:</th>
+                                <td>${data.country} ${data.country ? `<span class="flag-icon flag-icon-${data.country.toLowerCase()}"></span>` : ''}</td>
+                            </tr>
+                            <tr>
+                                <th>City:</th>
+                                <td>${data.city}</td>
+                            </tr>
+                            <tr>
+                                <th>Timezone:</th>
+                                <td>${data.timezone}</td>
+                            </tr>
+                            <tr>
+                                <th>Coordinates:</th>
+                                <td>
+                                    ${hasCoordinates ? `
+                                        ${data.latitude}, ${data.longitude}
+                                        <a href="https://www.google.com/maps?q=${data.latitude},${data.longitude}" 
+                                           target="_blank" class="btn btn-sm btn-link">
+                                            <i class="fas fa-external-link-alt"></i>
+                                        </a>
+                                    ` : 'Not available'}
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ISP & ASN Information -->
+                <div class="col-md-6">
+                    <div class="bg-dark rounded p-3 border border-secondary">
+                        <h6 class="text-warning mb-3"><i class="fas fa-building me-2"></i>ISP & ASN Information</h6>
+                        <table class="table table-dark table-sm">
+                            <tr>
+                                <th style="width: 120px;">ISP:</th>
+                                <td>${data.isp}</td>
+                            </tr>
+                            <tr>
+                                <th>ASN:</th>
+                                <td>${data.asn}</td>
+                            </tr>
+                            <tr>
+                                <th>Language:</th>
+                                <td>${data.language}</td>
+                            </tr>
+                            <tr>
+                                <th>Cookies Enabled:</th>
+                                <td><span class="badge bg-${data.cookies_enabled == 'Yes' ? 'success' : 'danger'}">${data.cookies_enabled}</span></td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Device Information -->
+                <div class="col-md-6">
+                    <div class="bg-dark rounded p-3 border border-secondary">
+                        <h6 class="text-purple mb-3"><i class="fas fa-laptop me-2"></i>Device Information</h6>
+                        <table class="table table-dark table-sm">
+                            <tr>
+                                <th style="width: 120px;">Screen Resolution:</th>
+                                <td>${data.screen_resolution}</td>
+                            </tr>
+                            <tr>
+                                <th>CPU Cores:</th>
+                                <td>${data.cpu_cores}</td>
+                            </tr>
+                            <tr>
+                                <th>RAM:</th>
+                                <td>${data.ram}</td>
+                            </tr>
+                            <tr>
+                                <th>GPU:</th>
+                                <td><small>${data.gpu}</small></td>
+                            </tr>
+                            <tr>
+                                <th>Battery:</th>
+                                <td>${data.battery}</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Browser Information -->
+                <div class="col-md-6">
+                    <div class="bg-dark rounded p-3 border border-secondary">
+                        <h6 class="text-danger mb-3"><i class="fas fa-globe me-2"></i>Browser Information</h6>
+                        <div class="mb-3">
+                            <label class="text-muted small">User Agent:</label>
+                            <div class="bg-black p-2 rounded small border border-dark">
+                                ${data.user_agent}
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-muted small">Plugins:</label>
+                            <div class="bg-black p-2 rounded small border border-dark" style="max-height: 100px; overflow-y: auto;">
+                                ${data.plugins}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.getElementById('logDetailsContent').innerHTML = content;
+        document.getElementById('modalBlockIpBtn').onclick = function() {
+            window.location.href = 'block-list.php?ip=' + encodeURIComponent(data.ip);
+        };
+        
+        modal.show();
+    }
+    
+    // Toggle details visibility (keep for backward compatibility)
     function toggleDetails(id) {
         const element = document.getElementById(id);
         if (element.style.display === 'block') {
@@ -832,6 +1071,28 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
         background-color: #1a1a1a !important;
     }
     
+    .modal-xl {
+        max-width: 90vw;
+    }
+    
+    .modal-content {
+        border: 1px solid #495057;
+    }
+    
+    .modal-header {
+        border-bottom: 1px solid #495057;
+    }
+    
+    .modal-footer {
+        border-top: 1px solid #495057;
+    }
+    
+    .table-dark.table-sm td, 
+    .table-dark.table-sm th {
+        padding: 0.5rem;
+        border-color: #495057;
+    }
+    
     @media (max-width: 768px) {
         .btn-group-sm .btn {
             padding: 0.25rem 0.5rem;
@@ -844,6 +1105,11 @@ $debug_link = $debug ? 'user-tracker.php' : 'user-tracker.php?debug=1';
         
         .stat-number {
             font-size: 1.8rem;
+        }
+        
+        .modal-xl {
+            max-width: 100%;
+            margin: 0.5rem;
         }
     }
 </style>
